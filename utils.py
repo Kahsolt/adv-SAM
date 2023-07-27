@@ -130,5 +130,5 @@ def get_args(parser:ArgumentParser=None) -> Namespace:
   args = parser.parse_args()
 
   assert Path(args.f).is_file(), f'>> {args.f} is not a file'
-
+  args.argv = ' '.join(sys.argv)
   return args
