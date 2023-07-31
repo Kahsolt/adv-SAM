@@ -222,11 +222,16 @@ def run(args):
   img = load_img(args.f)  # [H, W, C]
   img_size = img.shape[:-1]
 
-  # make edge
+  # make lim
   if args.lim:
-    edge = get_mask_edge(img, args.thresh)
+    if args.lim == 'edge':
+      lim = get_mask_edge(img, args.thresh)
+    else:   # it should be a point coord
+      prompts = make_prompts(args.lim, img_size)
+      mask, _ = make_pred(sam, img, prompts)
+      lim = mask > sam.mask_threshold
   else:
-    edge = None
+    lim = None
   
   # make target
   if args.point_tgt:
@@ -242,7 +247,7 @@ def run(args):
   mask, iou = make_pred(sam, img, prompts)
 
   # attack
-  adv = pgd(args, sam, prompts, img, tgt=tgt, lim=edge)
+  adv = pgd(args, sam, prompts, img, tgt=tgt, lim=lim)
   diff = make_diff(img, adv)
 
   # pred AX
@@ -253,11 +258,11 @@ def run(args):
     plt.clf()
     plt.subplot(231) ; plt.imshow(img)                  ; plt.title('img')
     plt.subplot(232) ; plt.imshow(mask, cmap='gray')    ; plt.title(f'mask (iou={iou.item():.5f})')
-    if edge is not None:
-      plt.subplot(233) ; plt.imshow(edge, cmap='gray')   ; plt.title('edge')
+    if lim is not None:
+      plt.subplot(233) ; plt.imshow(lim, cmap='gray')   ; plt.title('lim')
     plt.subplot(234) ; plt.imshow(adv)                   ; plt.title('img_adv')
     plt.subplot(235) ; plt.imshow(mask_adv, cmap='gray') ; plt.title(f'mask_adv (iou={iou_adv.item():.5f})')
-    plt.subplot(236) ; plt.imshow(diff, cmap='gray')     ; plt.title('diff')
+    plt.subplot(236) ; plt.imshow(diff, cmap='gray')     ; plt.title('diff (proc)')
     plt.suptitle(f'point: {prompts[0][0]}')
     plt.tight_layout()
     fp = args.log_dp / 'atk_sam.png'
@@ -270,7 +275,7 @@ if __name__ == '__main__':
   parser = get_parser()
   parser.add_argument('--point',     help='point coord formatted as h,w; e.g. 0.3,0.4 or 200,300')
   parser.add_argument('--point_tgt', help='alike --point, but specify target mask point, run targetd attack')
-  parser.add_argument('--lim',    action='store_true', help='limit PGD to edge area')
+  parser.add_argument('--lim',    default='',    type=str,   help='limit PGD to edge area, or a predicted mask area')
   parser.add_argument('--thresh', default=0.1,   type=float, help='edge threshold')
   parser.add_argument('--steps',  default=20,    type=int)
   parser.add_argument('--eps',    default=8/255, type=float)
