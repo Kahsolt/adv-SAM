@@ -29,7 +29,7 @@ python atk_sam.py --point 400,200 --point_tgt 250,550
 
 REM 有目标攻击 + 限制修改区域到 边缘
 REM e.g. 指针指向 狗 → 预测出 盆子, 仅修改 边缘 区域
-python atk_sam.py --point 400,200 --point_tgt 250,550 --lim edge --thresh 0.1 
+python atk_sam.py --point 400,200 --point_tgt 250,550 --lim edge --thresh 0.1
 
 
 REM 有目标攻击 + 限制修改区域到 目标

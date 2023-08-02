@@ -1,5 +1,7 @@
 @ECHO OFF
 
+PUSHD %~dp0
+
 REM SAM
 git clone https://github.com/facebookresearch/segment-anything
 
@@ -7,15 +9,20 @@ PUSHD segment-anything
 IF NOT EXIST ckpt MKDIR ckpt
 PUSHD ckpt
 
-IF NOT EXIST sam_vit_h_4b8939.pth (wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth)
-IF NOT EXIST sam_vit_l_0b3195.pth (wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth)
 IF NOT EXIST sam_vit_b_01ec64.pth (wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth)
+
+IF NOT "%1"=="all" GOTO skip_large_models
+IF NOT EXIST sam_vit_l_0b3195.pth (wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth)
+IF NOT EXIST sam_vit_h_4b8939.pth (wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth)
+:skip_large_models
 
 POPD
 POPD
 
 REM SegPGD
 git clone https://github.com/u6630774/SegPGD
+
+POPD
 
 ECHO Done!
 ECHO.

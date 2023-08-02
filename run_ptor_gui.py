@@ -23,9 +23,9 @@ class App:
     self.args: Namespace = args
     self.cur_model: str = None
     self.predictor: SamPredictor = None
-    self.img: npimgi = None
-    self.img_red: npimgi = None
-    self.img_grey: npimgi = None
+    self.img: npimg_u8 = None
+    self.img_red: npimg_u8 = None
+    self.img_grey: npimg_u8 = None
 
     self.setup_gui()
     self.init_workspace()
