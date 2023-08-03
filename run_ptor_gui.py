@@ -139,7 +139,7 @@ class App:
     masks                # [B=1, H=534, W=800], float
     low_res_logits       # [B=1, H=256, W=256], float
     iou_predictions      # [B=1, N=1], float
-    print(f'>> iou: {iou_predictions.item()}')
+    print(f'>> piou: {iou_predictions.item()}')
 
     mask = np.expand_dims(masks_bin[0], -1)   # [H, W, C=1]
     seg = self.img_red * mask + self.img_grey * ~mask

@@ -17,13 +17,13 @@ def run(args):
     labels = np.asarray([1])
   masks, iou_predictions, low_res_masks = predictor.predict(point_coords=coords, point_labels=labels, multimask_output=False)
 
-  for mask, iou, lmask in zip(masks, iou_predictions, low_res_masks):
-    print('iou:', iou.item())
+  for mask, piou, lmask in zip(masks, iou_predictions, low_res_masks):
+    print('piou:', piou.item())
 
     plt.clf()
     plt.subplot(121) ; sns.heatmap( mask) ; plt.title('mask')
     plt.subplot(122) ; sns.heatmap(lmask) ; plt.title('mask orig.')
-    plt.suptitle(f'iou: {iou.item()}')
+    plt.suptitle(f'piou: {piou.item()}')
     plt.show()
 
 

@@ -2,6 +2,9 @@
 # Author: Armit
 # Create Time: 2023/07/05 
 
+import json
+import random
+from time import time
 from pathlib import Path
 from PIL import Image, ImageFilter
 from PIL.Image import Image as PILImage
@@ -15,6 +18,7 @@ import torch.nn.functional as F
 from torch.autograd import grad
 from torchvision.utils import make_grid
 import numpy as np
+from numpy import ndarray
 from numpy.typing import NDArray
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -38,14 +42,43 @@ if 'repo':
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+BASE_PATH = Path(__file__).parent.absolute()
+DATA_PATH = BASE_PATH / 'data'
+DATA_ROOT = DATA_PATH / 'SAM_data'
+DATASET_LITERAL = 'dataset'
+HIST_FILE = BASE_PATH / 'atk_sam.json'
+
 npimg_u8  = NDArray[np.uint8]
 npimg_f32 = NDArray[np.float32]
 npimg_b1  = NDArray[np.bool_]
 npimg     = Union[npimg_u8, npimg_f32, npimg_b1]
+Data      = Union[ndarray, Tensor]
 Size      = Tuple[int, int]
 Point     = Tuple[int, int]
 
-def load_img(fp:Path, mode='RGB', dtype=np.uint8) -> Tuple[npimg_u8, npimg_f32]:
+
+def seed_everything(seed:int):
+  print('>> global seed:', seed)
+  random.seed(seed)
+  np.random.seed(seed)
+  torch.manual_seed(seed)
+  if device == 'cuda':
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.enabled = False
+    #torch.backends.cudnn.benchmark = True
+    #torch.backends.cudnn.deterministic = True
+
+def timer(fn):
+  def wrapper(*args, **kwargs):
+    start = time()
+    r = fn(*args, **kwargs)
+    end = time()
+    print(f'[Timer]: {fn.__name__} took {end - start:.3f}s')
+    return r
+  return wrapper
+
+
+def load_img(fp:Path, mode='RGB', dtype=np.uint8) -> Union[npimg_u8, npimg_f32]:
   assert dtype in [np.uint8, np.float32], 'invalid dtype, should be in [np.uint8, np.float32]'
 
   img = Image.open(str(fp)).convert(mode)
@@ -97,17 +130,40 @@ def img_to_grey(im:npimg_u8) -> npimg_u8:
   return np.expand_dims(im, -1)   # [H, W, C=1]
 
 def is_npimg_u8(im:npimg) -> bool:
-  if not isinstance(im, np.ndarray): return False
+  if not isinstance(im, ndarray): return False
   if im.dtype != np.uint8: return False
   if len(im.shape) not in [2, 3]: return False
   if len(im.shape) == 3 and im.shape[-1] not in [1, 3]: return False
   return True
 
-def minmax_norm(x:np.ndarray) -> np.ndarray:
-  return (x - x.min()) / (x.max() - x.min())
+def minmax_norm(x:Data, vmax:float=None) -> Data:
+  if vmax is None: vmax = x.max() 
+  return (x - x.min()) / (vmax - x.min())
 
-def info_t(x:Union[np.ndarray, Tensor], name:str='x'):
+def info_t(x:Data, name:str='x'):
   print(f'{name}: shape={tuple(x.shape)}, dtype={x.dtype}')
+
+
+def get_iou(x:Tensor, y:Tensor) -> float:
+  return (x & y).sum() / (x | y).sum()
+
+
+def load_json(fp:Path, default:Any=dict) -> Dict:
+  if not fp.exists():
+    assert isinstance(default, Callable), '"default" should be a callable'
+    return default()
+  with open(fp, 'r', encoding='utf-8') as fh:
+    return json.load(fh)
+
+def save_json(data:Any, fp:Path):
+  def _cvt(v:Any) -> Any:
+    if isinstance(v, Path): return str(v)
+    else: return v
+
+  with open(fp, 'w', encoding='utf-8') as fh:
+    json.dump(data, fh, indent=2, ensure_ascii=False, default=_cvt)
+
+load_cfg = load_json
 
 
 def load_sam(model:str) -> Sam:
@@ -121,14 +177,15 @@ def get_param_cnt(model:nn.Module) -> int:
 
 def get_parser() -> ArgumentParser:
   parser = ArgumentParser()
-  parser.add_argument('-M', default='vit_b', choices=SAM_CKPTS.keys())
-  parser.add_argument('-f', default=SAM_DEMO_FILE, type=Path)
+  parser.add_argument('-M', default='vit_b', choices=SAM_CKPTS.keys(), help='model checkpoint')
+  parser.add_argument('-B', default=1, type=int, help='batch size')
+  parser.add_argument('-f', default=str(SAM_DEMO_FILE), type=str, help=f'path to image file or {DATASET_LITERAL:s}')
   return parser
 
 def get_args(parser:ArgumentParser=None) -> Namespace:
   parser = parser or get_parser()
   args = parser.parse_args()
 
-  assert Path(args.f).is_file(), f'>> {args.f} is not a file'
+  assert args.f == DATASET_LITERAL or Path(args.f).is_file(), f'>> {args.f} is not a file or literal {DATASET_LITERAL:s}'
   args.argv = ' '.join(sys.argv)
   return args
