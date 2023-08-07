@@ -44,6 +44,7 @@ REM e.g. 干净预测
 python atk_sam.py -f dataset
 REM e.g. 干净预测 (前 10 个样本)
 python atk_sam.py -f dataset -L 10
+python atk_sam.py -f dataset -L 10 --multi_mask
 REM e.g. PGD 无目标攻击
 python atk_sam.py -f dataset --atk
 REM e.g. PGD 无目标攻击，限制修改到 边缘

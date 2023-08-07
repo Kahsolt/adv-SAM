@@ -217,11 +217,14 @@ def make_prompts(point:Union[str, ndarray], img_size:tuple) -> Tuple:
   labels = np.asarray([1])
   return (coords, labels, None, None)
 
-def make_pred(ptor:SamPredictor, img:npimg_u8, prompts:Tuple) -> Tuple[npimg_b1, float]:
+def make_pred(ptor:SamPredictor, img:npimg_u8, prompts:Tuple, multi_out:bool=False) -> Union[Tuple[npimg_b1, float], Tuple[List[npimg_b1], List[float]]]:
   ptor.reset_image()
   ptor.set_image(img)
-  mask, piou, _ = ptor.predict(*prompts, multimask_output=False)
-  return mask[0], piou.item()    # [C=1, H, W] => [H, W]
+  mask, piou, _ = ptor.predict(*prompts, multimask_output=multi_out)
+  if multi_out:
+    return [mask[i] for i in range(len(mask))], piou.tolist()
+  else:
+    return mask[0], piou.item()    # [C=1, H, W] => [H, W]
 
 def make_diff(img:npimg_u8, adv:npimg_u8) -> npimg_f32:
   im0 = img / 255.0
@@ -360,10 +363,15 @@ def run_dataset(args):
 
           _, mask_hat, piou = pgd(args, fwder, prompts, img, tgt, lim, log=args.debug)
         else:
-          mask_hat, piou = make_pred(ptor, img, prompts)
+          mask_hat, piou = make_pred(ptor, img, prompts, multi_out=args.multi_mask)
+
+        if isinstance(mask_hat, list):
+          riou = max([get_iou(m, mask_gt) for m in mask_hat])
+        else:
+          riou = get_iou(mask_hat, mask_gt)
 
         iou_cnt += 1
-        iou_sum += get_iou(mask_hat, mask_gt)
+        iou_sum += riou
 
   except KeyboardInterrupt:
     print('>> interrupted!!')
@@ -404,6 +412,7 @@ if __name__ == '__main__':
   parser.add_argument('-K', '--limit_ant', default=1,  type=int, help='limit run annot count of each image, set -1 for all')
   parser.add_argument('--atk', action='store_true', help='enable PGD attack')
   parser.add_argument('--tgt', action='store_true', help='enable targeted attack (use randomly another mask as the target)')
+  parser.add_argument('--multi_mask', action='store_true', help='use essay method to calc mIoU (pick the highest IoU from multipile mask outputs)')
   parser.add_argument('--seed', default=114514, type=int, help='rand seed')
   parser.add_argument('--debug', action='store_true', help='show detailed log step by step')
   args = get_args(parser)
