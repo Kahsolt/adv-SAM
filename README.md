@@ -27,9 +27,21 @@
 
 ```
 data/
-  SAM_data/
+  SAM_data/       # SAM dataset
     sa_*.png
     sa_*.json
+  kitti/          # kitti dataset & process code
+    datasets_kitti2015/
+      testing/
+        image_2/*.png
+      training/
+        image_2/*.png
+        instance/*.png
+        semantic/*.png
+        semantic_rgb/*.png
+    devkit_semantics/       # optional, it's ok if not exists
+      devkit/*/*.py[c]
+      README.md
 ```
 
 ----

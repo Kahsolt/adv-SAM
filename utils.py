@@ -44,9 +44,10 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 BASE_PATH = Path(__file__).parent.absolute()
 DATA_PATH = BASE_PATH / 'data'
-DATA_ROOT = DATA_PATH / 'SAM_data'
-DATASET_LITERAL = 'dataset'
-HIST_FILE = BASE_PATH / 'atk_sam.json'
+DATASET_PATH = {
+  'sam':   DATA_PATH / 'SAM_data',
+  'kitti': DATA_PATH / 'kitti' / 'datasets_kitti2015',
+}
 
 npimg_u8  = NDArray[np.uint8]
 npimg_f32 = NDArray[np.float32]
@@ -144,8 +145,15 @@ def info_t(x:Data, name:str='x'):
   print(f'{name}: shape={tuple(x.shape)}, dtype={x.dtype}')
 
 
-def get_iou(x:Tensor, y:Tensor) -> float:
+def get_iou(x:Data, y:Data) -> float:
   return (x & y).sum() / (x | y).sum()
+
+def get_iou_auto(x:Union[Data, List[Data]], y:Data) -> float:
+  if isinstance(x, list):
+    iou = max([get_iou(m, y) for m in x])
+  else:
+    iou = get_iou(x, y)
+  return iou
 
 
 def load_json(fp:Path, default:Any=dict) -> Dict:
@@ -178,14 +186,16 @@ def get_param_cnt(model:nn.Module) -> int:
 def get_parser() -> ArgumentParser:
   parser = ArgumentParser()
   parser.add_argument('-M', default='vit_b', choices=SAM_CKPTS.keys(), help='model checkpoint')
-  parser.add_argument('-B', default=1, type=int, help='batch size')
-  parser.add_argument('-f', default=str(SAM_DEMO_FILE), type=str, help=f'path to image file or {DATASET_LITERAL:s}')
+  parser.add_argument('-B', default=1, type=int, help='batch size (not used, no impl)')
+  parser.add_argument('-D', choices=DATASET_PATH.keys(),help='dataset name')
+  parser.add_argument('-f', default=SAM_DEMO_FILE, help='path to image file')
   return parser
 
 def get_args(parser:ArgumentParser=None) -> Namespace:
   parser = parser or get_parser()
   args = parser.parse_args()
 
-  assert args.f == DATASET_LITERAL or Path(args.f).is_file(), f'>> {args.f} is not a file or literal {DATASET_LITERAL:s}'
+  if not args.D:
+    assert Path(args.f).is_file(), f'>> {args.f} is not a file'
   args.argv = ' '.join(sys.argv)
   return args
