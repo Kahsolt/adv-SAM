@@ -57,9 +57,10 @@ def run(args):
           else:
             tgt = None
         
-          if args.lim == 'edge': lim = get_mask_edge(img, args.thresh)
-          if args.lim == 'tgt':  lim = tgt
-          else:                  lim = None
+          if args.lim:
+            lim = make_lim(args, img, ptor)
+          else:
+            lim = None
 
           _, mask_hat, piou_hat = pgd(args, fwder, prompts, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
         else:

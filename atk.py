@@ -235,6 +235,23 @@ def make_diff(img:npimg_u8, adv:npimg_u8) -> npimg_f32:
   diff = minmax_norm(d)
   return diff
 
+def make_lim(args, img:npimg_u8, ptor:SamPredictor) -> npimg_b1:
+  lim_s: str = args.lim
+  inv = False
+  if lim_s.startswith('~'):
+    lim_s = lim_s[1:]
+    inv = True
+
+  if lim_s == 'edge':
+    lim = get_mask_edge(img, args.thresh)
+  else:   # it should be a point coord
+    prompts = make_prompts(lim_s, img.shape[:-1])
+    mask, _ = make_pred(ptor, img, prompts)
+    lim = mask > ptor.model.mask_threshold
+
+  if inv: lim = ~lim
+  return lim
+
 
 def run(args):
   # model
@@ -247,12 +264,7 @@ def run(args):
 
   # make lim
   if args.lim:
-    if args.lim == 'edge':
-      lim = get_mask_edge(img, args.thresh)
-    else:   # it should be a point coord
-      prompts = make_prompts(args.lim, img_size)
-      mask, _ = make_pred(ptor, img, prompts)
-      lim = mask > sam.mask_threshold
+    lim = make_lim(args, img, ptor)
   else:
     lim = None
   
