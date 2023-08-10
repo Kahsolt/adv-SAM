@@ -2,17 +2,14 @@
 # Author: Armit
 # Create Time: 2023/08/07
 
-from queue import Queue
-
 from atk import *
 from atk_sam import get_parser as get_base_parser, get_args
+
+# annot IDs ref: https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py
 
 DATA_ROOT = DATASET_PATH['kitti'] / 'training'
 HIST_FILE = BASE_PATH / 'atk_kitti.json'
 
-# annot IDs ref: https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py
-
-npimg_u16 = NDArray[np.uint16]
 
 def load_annot(fp:Path) -> npimg_u16:
   img = Image.open(str(fp))
@@ -33,6 +30,8 @@ def image_clip(img:npimg_u8, annot:npimg_u16) -> Tuple[npimg_u8, npimg_u16]:
 
 def mask_pick_connected(mask:npimg_b1, thresh:float=0.0) -> npimg_b1:
   ''' original semantical mask could be not connected, we randomly pick a connected area '''
+
+  from queue import Queue
 
   H, W = mask.shape
   min_area = int(mask.sum() * thresh) if thresh <= 1.0 else int(thresh)
@@ -142,22 +141,18 @@ def run(args):
 
           if args.atk:
             if args.tgt:
-              oid_tgt = np.random.choice(oids, size=1, replace=False)[0]
+              oid_tgt = oid
               while oid_tgt == oid: oid_tgt = np.random.choice(oids, size=1, replace=False)[0]
               point_tgt = np.asarray([mask_centroid(annot == oid_tgt)], dtype=np.float32)
-              prompts_tgt = make_prompts(point_tgt, img_size)
-              tgt, _ = make_pred(ptor, img, prompts_tgt)
+              tgt = make_tgt(ptor, img, point_tgt)
             else:
               tgt = None
           
-            if args.lim:
-              lim = make_lim(args, img, ptor)
-            else:
-              lim = None
+            lim = make_lim(args, img, tgt, prompts, ptor, fwder) if args.lim else None
 
-            _, mask_hat, piou = pgd(args, fwder, prompts, img, tgt, lim, log=args.debug)
+            _, mask_hat, piou_hat = pgd(args, fwder, prompts, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
           else:
-            mask_hat, piou = make_pred(ptor, img, prompts, multi_mask=args.multi_mask)
+            mask_hat, piou_hat = make_pred(ptor, img, prompts, multi_mask=args.multi_mask)
 
           if not 'debug':
             plt.figure(figsize=(6, 3), dpi=240)
@@ -195,11 +190,9 @@ def run(args):
     save_json(hist, HIST_FILE)
 
 
-def get_parser() -> ArgumentParser:
-  parser = get_base_parser()
-  parser.add_argument('--area_thresh', default=0.05, type=float, help='minimal mask area to pick in percentage (<= 1.0) or absolute (> 1)')
-  return parser
-
-
 if __name__ == '__main__':
-  run(get_args(get_parser()))
+  parser = get_base_parser()
+  parser.add_argument('--area_thresh', default=0.05, type=float, help='minimal mask connected area in percentage (<= 1.0) or absolute (> 1)')
+  args = get_args(parser)
+
+  run(args)

@@ -19,6 +19,9 @@ IF NOT EXIST sam_vit_h_4b8939.pth (wget https://dl.fbaipublicfiles.com/segment_a
 POPD
 POPD
 
+REM Grad-CAM
+git clone https://github.com/jacobgil/pytorch-grad-cam
+
 REM SegPGD
 git clone https://github.com/u6630774/SegPGD
 

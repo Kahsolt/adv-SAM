@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 if 'repo':
   BASE_PATH = Path(__file__).parent.absolute()
   REPO_PATH = BASE_PATH / 'repo'
-  SAM_PATH  = REPO_PATH / 'segment-anything'
+  SAM_PATH = REPO_PATH / 'segment-anything'
   SAM_CKPT_PATH = SAM_PATH / 'ckpt'
   SAM_DEMO_FILE = SAM_PATH / 'notebooks' / 'images' / 'dog.jpg'
   SAM_CKPTS = {
@@ -34,9 +34,13 @@ if 'repo':
     'vit_l': 'sam_vit_l_0b3195.pth',
     'vit_h': 'sam_vit_h_4b8939.pth',
   }
+  GRAD_CAM_PATH = REPO_PATH / 'pytorch-grad-cam'
+  SEG_PGD_PATH = REPO_PATH / 'SegPGD'
 
   import sys
   sys.path.append(str(SAM_PATH))
+  sys.path.append(str(GRAD_CAM_PATH))
+  sys.path.append(str(SEG_PGD_PATH))
   from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
   from segment_anything.modeling import Sam
 
@@ -48,14 +52,17 @@ DATASET_PATH = {
   'sam':   DATA_PATH / 'SAM_data',
   'kitti': DATA_PATH / 'kitti' / 'datasets_kitti2015',
 }
+OUT_PATH = BASE_PATH / 'out' ; OUT_PATH.mkdir(exist_ok=True)
 
 npimg_u8  = NDArray[np.uint8]
+npimg_u16 = NDArray[np.uint16]
 npimg_f32 = NDArray[np.float32]
 npimg_b1  = NDArray[np.bool_]
 npimg     = Union[npimg_u8, npimg_f32, npimg_b1]
 Data      = Union[ndarray, Tensor]
 Size      = Tuple[int, int]
 Point     = Tuple[int, int]
+Prompts   = Tuple[ndarray, ndarray, None, None]
 
 
 def seed_everything(seed:int):
@@ -112,12 +119,20 @@ def show_anns(anns:Dict[str, Any]):
   ax.set_autoscale_on(False)
   ax.imshow(img)
 
-def get_mask_edge(im:npimg_u8, thresh:float=0.5) -> npimg_b1:
+def get_edge(im:npimg_u8, thresh:float=0.1) -> npimg_b1:
   assert is_npimg_u8(im), 'expect npimg of np.uint8'
   img = Image.fromarray(im)
   img = img.convert('RGB').filter(ImageFilter.FIND_EDGES).convert('L')
   return np.asarray(img) > (thresh * 255.0)
 
+def make_diff(img:npimg_u8, adv:npimg_u8) -> npimg_f32:
+  im0 = img / 255.0
+  im1 = adv / 255.0
+  d: npimg_f32 = np.abs(im0 - im1)
+  print('Linf (proc):', d.max())
+  print('L1 (proc):', d.mean())
+  diff = minmax_norm(d)
+  return diff
 
 def img_to_red(im:npimg_u8, shift:int=25) -> npimg_u8:
   im = np.copy(im).astype(np.uint16)
@@ -187,7 +202,7 @@ def get_parser() -> ArgumentParser:
   parser = ArgumentParser()
   parser.add_argument('-M', default='vit_b', choices=SAM_CKPTS.keys(), help='model checkpoint')
   parser.add_argument('-B', default=1, type=int, help='batch size (not used, no impl)')
-  parser.add_argument('-D', choices=DATASET_PATH.keys(),help='dataset name')
+  parser.add_argument('-D', choices=DATASET_PATH.keys(), help='dataset name')
   parser.add_argument('-f', default=SAM_DEMO_FILE, help='path to image file')
   return parser
 
@@ -195,7 +210,6 @@ def get_args(parser:ArgumentParser=None) -> Namespace:
   parser = parser or get_parser()
   args = parser.parse_args()
 
-  if not args.D:
-    assert Path(args.f).is_file(), f'>> {args.f} is not a file'
+  if not args.D: assert Path(args.f).is_file(), f'>> {args.f} is not a file'
   args.argv = ' '.join(sys.argv)
   return args

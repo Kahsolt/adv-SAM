@@ -49,18 +49,14 @@ def run(args):
         
         if args.atk:
           if args.tgt:
-            annots_tgt = np.random.choice(annots, size=1, replace=False)[0]
-            while annots_tgt == annots: annots_tgt = np.random.choice(annots, size=1, replace=False)[0]
+            annots_tgt = annot
+            while annots_tgt is annot: annots_tgt = np.random.choice(annots, size=1, replace=False)[0]
             point_tgt = np.asarray(annots_tgt['point_coords'])
-            prompts_tgt = make_prompts(point_tgt, img_size)
-            tgt, _ = make_pred(ptor, img, prompts_tgt)
+            tgt = make_tgt(ptor, img, point_tgt)
           else:
             tgt = None
         
-          if args.lim:
-            lim = make_lim(args, img, ptor)
-          else:
-            lim = None
+          lim = make_lim(args, img, tgt, prompts, ptor, fwder) if args.lim else None
 
           _, mask_hat, piou_hat = pgd(args, fwder, prompts, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
         else:
@@ -105,7 +101,7 @@ def get_args(parser:ArgumentParser=None) -> Namespace:
   args = get_base_args(parser)
 
   # meta
-  assert args.lim in ['', 'edge', 'tgt']
+  assert args.lim in LIM + ['tgt']
   if args.debug:
     args.log_dp = OUT_PATH / 'tmp'
     args.log_dp.mkdir(exist_ok=True)
