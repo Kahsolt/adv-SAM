@@ -26,9 +26,10 @@ python atk.py --point 400,200 --step 40 --eps 0.1 --alpha 0.01
 
 
 REM 无目标攻击：e.g. 指针指向 狗 → 预测出 全黑
-REM 命令行比有目标攻击多一个 --loss_w 可选选项
+REM 命令行比有目标攻击多 --loss_w, --force_bce 两个 **互斥的** 可选选项
 python atk.py --point 400,200
 python atk.py --point 400,200 --loss_w -4
+python atk.py --point 400,200 --force_bce
 
 REM 无目标攻击 + 限制修改区域
 REM 1. 仅修改 边缘

@@ -113,7 +113,7 @@ class SamForwarder(nn.Module):
 def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=None, 
         multi_mask:bool=False, log:bool=True) -> Union[Tuple[npimg_u8, npimg_b1, float], Tuple[npimg_u8, List[npimg_b1], List[float]]]:
 
-  loss_fn    = F.mse_loss if tgt is None else F.binary_cross_entropy_with_logits
+  loss_fn    = F.mse_loss if (tgt is None and not args.force_bce) else F.binary_cross_entropy_with_logits
   is_01      = lambda x: -1e-5 <= x.min() and x.max() <= 1.0
   b1_to_u8   = lambda x: np.tile((np.expand_dims(x, -1) * 255).astype(np.uint8), reps=(1, 1, 3))
   norm       = lambda x: fwder.norm_image  (x  * 255)    # [0, 1] to normed
@@ -129,6 +129,8 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
   M = fwder.transform_image(b1_to_u8(lim), is_edge=True).bool() if lim is not None else 1.0  # [B, C=3, pH, pW]
   P = fwder.transform_prompts(*prompts)
   Y = make_Y(tgt, img, args.loss_w).to(X.device)
+  if args.force_bce:
+    Y = torch.zeros_like(Y, device=Y.device, dtype=torch.float32)
   Y_bin = torch.zeros_like(Y) if tgt is None else Y
 
   if 'random start AX':
@@ -408,6 +410,7 @@ def get_parser() -> ArgumentParser:
   parser.add_argument('--alpha',  default=1/255, type=float)
   # non-targeted target
   parser.add_argument('--loss_w',  default=-10,   type=float, help='factor for non-targeted attack')
+  parser.add_argument('--force_bce', action='store_true', help='force use BCE rather than MSE')
   # limit modifiable area
   parser.add_argument('--lim',      default='',    type=str,   help='limit PGD to edge/smap/cam area, or predicted mask by point coord')
   parser.add_argument('--edge_w',   default=0.1,   type=float, help='sobel edge threshold')
