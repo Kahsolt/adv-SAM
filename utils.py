@@ -9,6 +9,7 @@ from pathlib import Path
 from PIL import Image, ImageFilter
 from PIL.Image import Image as PILImage
 from argparse import ArgumentParser, Namespace
+import gc
 from typing import *
 
 import torch
@@ -84,6 +85,41 @@ def timer(fn):
     print(f'[Timer]: {fn.__name__} took {end - start:.3f}s')
     return r
   return wrapper
+
+def gc_everything():
+  for _ in range(2):
+    gc.collect()
+    torch.cuda.ipc_collect()
+    torch.cuda.empty_cache()
+
+def get_all_tensors() -> List[Tensor]:
+  tensors = []
+  for obj in gc.get_objects():
+    try:
+      if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+        tensors.append(obj)
+    except:
+      pass
+  return tensors
+
+def info_mem_vram():
+  import os
+  import psutil
+  mem = psutil.Process(os.getpid()).memory_info()
+  print(f'[Mem] rss: {mem.rss/2**30:.3f} GB, vms: {mem.vms/2**30:.3f} GB')
+
+  if torch.cuda.is_available(): 
+    free, total = torch.cuda.mem_get_info()
+    print(f'[VRAM] free: {free/2**30:.3f} GB, total: {total/2**30:.3f} GB')
+
+  tensors = get_all_tensors()
+  print('n_tensor:', len(tensors))
+
+  if not 'pympler':
+    from pympler import muppy, summary
+    all_objects = muppy.get_objects()
+    sum1 = summary.summarize(all_objects)
+    summary.print_(sum1)
 
 
 def load_img(fp:Path, mode='RGB', dtype=np.uint8) -> Union[npimg_u8, npimg_f32]:

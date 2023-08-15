@@ -11,6 +11,12 @@ REM 脚
 python atk.py --point 400,600
 
 
+REM 对比 干净样本 和 对抗样本 的 CAM 图
+REM 无目标:狗
+python atk_vis.py --point 400,200 --cam_meth GradCAM
+REM 有目标: 狗 → 盆子
+python atk_vis.py --point 400,200 --point_tgt 250,550 --cam_meth GradCAM
+
 
 REM 通用攻击配置参数
 REM 1. 攻击方法

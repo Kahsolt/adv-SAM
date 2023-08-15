@@ -161,6 +161,7 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
       raise ValueError(f'unknown loss_fn: {loss_fn}')
 
     with torch.no_grad():
+      if loss.abs() < 1e-5: break     # NOTE: stop early
       g = grad(loss, AX, loss)[0]
       delta = g.sign() * M * args.alpha
 
@@ -174,7 +175,10 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
         preds.append(np.tile(decode_msk(mask), reps=(1, 1, 3)))
 
     if log:
-      print(f'>> piou: {piou.item():.5f}, masked_area: {(logits > 0).sum() / logits.numel():.3%}')
+      print(f'>> loss: {loss.item():.5f}, piou: {piou.item():.5f}, masked_area: {(logits > 0).sum() / logits.numel():.3%}')
+
+  fwder.model.zero_grad()
+  gc_everything()
 
   if is_gen_vid:
     try:
@@ -190,11 +194,6 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
       d: Tensor = torch.abs(Xo - denorm(AX))
     print('Linf (raw):', d.max().item())
     print('L1 (raw):', d.mean().item())
-
-  if 'gc':
-    torch.cuda.ipc_collect()
-    torch.cuda.empty_cache()
-    import gc; gc.collect()
   
   if multi_mask:
     logits, piou = fwder.forward(AX, *P, multi_mask=True)
@@ -225,9 +224,9 @@ def make_prompts(point:Union[str, ndarray], img_size:tuple) -> Prompts:
   return (coords, labels, None, None)
 
 def make_pred(ptor:SamPredictor, img:npimg_u8, prompts:Prompts, multi_mask:bool=False) -> Union[Tuple[npimg_b1, float], Tuple[List[npimg_b1], List[float]]]:
-  ptor.reset_image()
   ptor.set_image(img)
   mask, piou, _ = ptor.predict(*prompts, multimask_output=multi_mask)
+  ptor.reset_image()
   if multi_mask:
     return [mask[i] for i in range(len(mask))], piou.tolist()
   else:
@@ -280,6 +279,8 @@ def _make_smap(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npim
 
 @torch.no_grad()
 def _make_cam(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_u8) -> npimg_u8:
+  from pytorch_grad_cam.base_cam import BaseCAM
+  from pytorch_grad_cam.activations_and_gradients import ActivationsAndGradients
   from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
   from pytorch_grad_cam.utils.image import show_cam_on_image
 
@@ -303,9 +304,14 @@ def _make_cam(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg
   fwder.forward_orignal = fwder.forward
   fwder.forward = lambda x: fwder.forward_orignal(x, *P)[0]
 
-  cam_peeper = locals()[args.cam_meth](fwder, L, use_cuda=(device=='cuda'))
+  cam_peeper: BaseCAM = locals()[args.cam_meth](fwder, L)
   with torch.enable_grad():
     cam = cam_peeper(input_tensor=X, targets=T, eigen_smooth=False)
+  del X, P, Y, L, T
+  cam_peeper.activations_and_grads: ActivationsAndGradients
+  cam_peeper.activations_and_grads.activations.clear()
+  cam_peeper.activations_and_grads.gradients  .clear()
+  cam_peeper.activations_and_grads.handles    .clear()
   del cam_peeper
 
   # unhijack .forward()
@@ -354,18 +360,21 @@ def run(args):
   sam = load_sam(args.M)
   ptor = SamPredictor(sam)
   fwder = SamForwarder(sam)
+
   # image
   img = load_img(args.f)  # [H, W, C]
-  # make tgt
-  tgt = make_tgt(ptor, img, args.point_tgt) if args.point_tgt else None
   # make prompts
   prompts = make_prompts(args.point, img.shape[:-1])
-  # pred X
-  mask, piou = make_pred(ptor, img, prompts)
+  # make tgt
+  tgt = make_tgt(ptor, img, args.point_tgt) if args.point_tgt else None
   # make lim
   lim = make_lim(args, img, tgt, prompts, ptor, fwder) if args.lim else None
+
+  # pred X
+  mask, piou = make_pred(ptor, img, prompts)
   # attack
   adv, mask_adv, piou_adv = pgd(args, fwder, prompts, img, tgt=tgt, lim=lim)
+  # delta
   diff = make_diff(img, adv)
   # pred AX
   if not 'loopback to predictor':
