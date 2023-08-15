@@ -96,21 +96,19 @@ def get_parser() -> ArgumentParser:
   parser.add_argument('--multi_mask', action='store_true', help='use essay method to calc mIoU (pick the highest IoU from multipile mask outputs)')
   return parser
 
-def get_args(parser:ArgumentParser=None) -> Namespace:
-  if parser is None: parser = get_parser()
+def get_args(parser:ArgumentParser) -> Namespace:
   args = get_base_args(parser)
+  #assert args.lim in LIM + ['tgt']
 
-  # meta
-  assert args.lim in LIM + ['tgt']
-  if args.debug:
-    args.log_dp = OUT_PATH / 'tmp'
-    args.log_dp.mkdir(exist_ok=True)
-  else:
-    args.fps = -1
-  seed_everything(args.seed)
-
+  args.f = None
+  args.D = 'sam'
+  args.fps = -1
   return args
 
 
 if __name__ == '__main__':
-  run(get_args())
+  parser = get_parser()
+  args = get_args(parser)
+
+  mk_log(args)
+  run(args)

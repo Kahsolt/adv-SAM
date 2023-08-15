@@ -23,7 +23,7 @@ from utils import get_parser as get_base_parser, get_args as get_base_args
 from segment_anything.modeling import Sam
 from segment_anything.utils.transforms import ResizeLongestSide
 
-LIM = ['', 'edge', 'smap', 'cam']
+LIM = ['', 'edge', 'smap', 'cam', 'tgt']
 CAM_METH = ['GradCAM', 'HiResCAM', 'ScoreCAM', 'GradCAMPlusPlus', 'AblationCAM', 'XGradCAM', 'EigenCAM', 'FullGrad']
 
 class SamForwarder(nn.Module):
@@ -145,7 +145,8 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
     AX.requires_grad = True
 
     logits, piou = fwder.forward(AX, *P)    # [B=1, H, W], [B=1]
-    mask = logits > fwder.model.mask_threshold
+    with torch.no_grad():
+      mask = logits > fwder.model.mask_threshold
 
     if args.meth == 'SegPGD':
       # NOT: THIS OFFSET MAY BE WRONG, BUT KEEP IT AS ORIGINAL IMPL
@@ -159,16 +160,18 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
     else:
       raise ValueError(f'unknown loss_fn: {loss_fn}')
 
-    g = grad(loss, AX, loss)[0]
-    delta = g.sign() * M * args.alpha
+    with torch.no_grad():
+      g = grad(loss, AX, loss)[0]
+      delta = g.sign() * M * args.alpha
 
-    AX = denorm(AX.detach()) - delta
-    DX: Tensor = (AX - Xo).clamp(-args.eps, args.eps)
-    AX = norm((Xo + DX).detach().clamp(0.0, 1.0))
+      AX = denorm(AX.detach()) - delta
+      DX: Tensor = (AX - Xo).clamp(-args.eps, args.eps)
+      AX = norm((Xo + DX).detach().clamp(0.0, 1.0))
 
     if is_gen_vid:
-      dxs.append(decode_dx(DX))
-      preds.append(np.tile(decode_msk(mask), reps=(1, 1, 3)))
+      with torch.no_grad():
+        dxs.append(decode_dx(DX))
+        preds.append(np.tile(decode_msk(mask), reps=(1, 1, 3)))
 
     if log:
       print(f'>> piou: {piou.item():.5f}, masked_area: {(logits > 0).sum() / logits.numel():.3%}')
@@ -183,10 +186,16 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
       print_exc()
   
   if log:
-    d: Tensor = torch.abs(Xo - denorm(AX))
+    with torch.no_grad():
+      d: Tensor = torch.abs(Xo - denorm(AX))
     print('Linf (raw):', d.max().item())
     print('L1 (raw):', d.mean().item())
 
+  if 'gc':
+    torch.cuda.ipc_collect()
+    torch.cuda.empty_cache()
+    import gc; gc.collect()
+  
   if multi_mask:
     logits, piou = fwder.forward(AX, *P, multi_mask=True)
     mask = logits > fwder.model.mask_threshold
@@ -329,6 +338,8 @@ def make_lim(args, img:npimg_u8, tgt:npimg_u8, prompts:Prompts, ptor:SamPredicto
     lim = _make_smap(args, fwder, prompts, img, tgt)
   elif lim_s == 'cam':
     lim = _make_cam(args, fwder, prompts, img, tgt)
+  elif lim_s == 'tgt':
+    lim = ~tgt
   else:   # it should be a point coord
     prompts = make_prompts(lim_s, img.shape[:-1])
     mask, _ = make_pred(ptor, img, prompts)
@@ -401,25 +412,26 @@ def get_parser() -> ArgumentParser:
   parser.add_argument('--vis', action='store_true', help='show generated --lim')
   return parser
 
-def get_args(parser:ArgumentParser=None) -> Namespace:
-  if parser is None: parser = get_parser()
+def get_args(parser:ArgumentParser) -> Namespace:
   args = get_base_args(parser)
+  seed_everything(args.seed)
+
   # param check
-  assert args.lim in LIM or ',' in args.lim, 'invalid --lim'
+  #assert args.lim in LIM or ',' in args.lim, 'invalid --lim'
   # override
   if args.meth == 'FSGM':
     if args.steps != 1:
       print('warn: force override --steps to 1 for FSGM method')
     args.steps = 1
     args.alpha = args.eps
-  # meta log
-  args.log_dp = OUT_PATH / str(datetime.now()).replace(' ', '_').replace(':', '')
-  args.log_dp.mkdir()
-  fp = args.log_dp / 'args.json'
-  save_json(vars(args), fp)
   # force verbose
   args.debug = True
   return args
+
+def mk_log(args):
+  args.log_dp = OUT_PATH / str(datetime.now()).replace(' ', '_').replace(':', '')
+  args.log_dp.mkdir()
+  save_json(vars(args), args.log_dp / 'args.json')
 
 
 if __name__ == '__main__':
@@ -428,4 +440,5 @@ if __name__ == '__main__':
   parser.add_argument('--point_tgt', help='alike --point, but specify target mask point, run targetd attack')
   args = get_args(parser)
 
+  mk_log(args)
   run(args)

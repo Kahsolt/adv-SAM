@@ -3,7 +3,8 @@
 # Create Time: 2023/08/07
 
 from atk import *
-from atk_sam import get_parser as get_base_parser, get_args
+from atk import get_args as get_base_args
+from atk_sam import get_parser as get_base_parser
 
 # annot IDs ref: https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py
 
@@ -190,9 +191,24 @@ def run(args):
     save_json(hist, HIST_FILE)
 
 
-if __name__ == '__main__':
+def get_parser() -> ArgumentParser:
   parser = get_base_parser()
-  parser.add_argument('--area_thresh', default=0.05, type=float, help='minimal mask connected area in percentage (<= 1.0) or absolute (> 1)')
+  parser.add_argument('--multi_mask', action='store_true', help='use essay method to calc mIoU (pick the highest IoU from multipile mask outputs)')
+  return parser
+
+def get_args(parser:ArgumentParser) -> Namespace:
+  args = get_base_args(parser)
+  #assert args.lim in LIM + ['tgt']
+
+  args.f = None
+  args.D = 'kitti'
+  args.fps = -1
+  return args
+
+
+if __name__ == '__main__':
+  parser = get_parser()
   args = get_args(parser)
 
+  mk_log(args)
   run(args)
