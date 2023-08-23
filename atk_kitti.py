@@ -193,7 +193,7 @@ def run(args):
 
 def get_parser() -> ArgumentParser:
   parser = get_base_parser()
-  parser.add_argument('--multi_mask', action='store_true', help='use essay method to calc mIoU (pick the highest IoU from multipile mask outputs)')
+  parser.add_argument('--area_thresh', default=0.05, type=float, help='minimal mask connected area in percentage (<= 1.0) or absolute (> 1)')
   return parser
 
 def get_args(parser:ArgumentParser) -> Namespace:
