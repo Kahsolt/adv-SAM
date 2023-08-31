@@ -1,8 +1,13 @@
-# adv-SAM
+# Call White Black: Adversarial Attack over SAM
 
-    Edge-PGD adversarial attack over the Segment-Anything model
+    Explore targeted PGD adversarial attack over the Segment-Anything Model
 
 ----
+
+### **The official implementation of Call White Black: Mislead the Segment-Anything Model with Targeted Attack**  
+
+Do not worry, our paper is on the way :) 🎉🎉🎉  
+
 
 ### Quickstart
 
@@ -15,9 +20,8 @@
 ⚪ run
 
 - run `run_ptor_gui.py` for interactive SAM app
-- run `atk_sam.py` for PGD and Edge-PGD attack
-  - see cmdline exmpales in `run.cmd`
-- run `atk_sam_dataset.py` to test over the dataset
+- run `atk_sam.py` for attack
+- see cmdline exmpales in `run.cmd`
 
 
 ### Dataset
@@ -42,6 +46,27 @@ data/
     devkit_semantics/       # optional, it's ok if not exists
       devkit/*/*.py[c]
       README.md
+```
+
+
+#### reference
+
+- Attack-SAM: [https://arxiv.org/abs/2305.00866](https://arxiv.org/abs/2305.00866)
+- SegPGD: [https://arxiv.org/abs/2207.12391](https://arxiv.org/abs/2207.12391)
+
+
+#### credit
+
+If you find this useful, please cite us:
+
+```
+@misc{kahsolt2023,
+  author = {Kahsolt},
+  title  = {Call White Black: Mislead the Segment-Anything Model with Targeted Attack},
+  howpublished = {\url{https://github.com/Kahsolt/adv-SAM}}
+  month  = {June},
+  year   = {2023}
+}
 ```
 
 ----
