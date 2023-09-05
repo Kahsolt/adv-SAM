@@ -184,8 +184,8 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
 
   if is_gen_vid:
     try:
-      dxs_rep   = [dxs  [0]] * args.fps * 4 + dxs   + [dxs  [-1]] * args.fps * 4
-      preds_rep = [preds[0]] * args.fps * 4 + preds + [preds[-1]] * args.fps * 4
+      dxs_rep   = [dxs  [0]] * args.fps * 2 + dxs   + [dxs  [-1]] * args.fps * 4
+      preds_rep = [preds[0]] * args.fps * 2 + preds + [preds[-1]] * args.fps * 4
       ImageSequenceClip(dxs_rep,   fps=args.fps).write_videofile(str(args.log_dp / 'pgd_noise.mp4'))
       ImageSequenceClip(preds_rep, fps=args.fps).write_videofile(str(args.log_dp / 'pgd_mask.mp4'))
     except:

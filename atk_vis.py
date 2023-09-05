@@ -37,7 +37,7 @@ def run(args):
     mask_adv, piou_adv = make_pred(ptor, adv, prompts)
     
   if 'show':
-    cmap_hot = 'bwr'
+    cmap_hot = 'rainbow'
     cmap_bin = 'gray'
     plt.figure(figsize=(10, 6))
     plt.clf()

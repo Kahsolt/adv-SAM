@@ -8,6 +8,7 @@ from time import time
 from pathlib import Path
 from PIL import Image, ImageFilter
 from PIL.Image import Image as PILImage
+from PIL.ImageEnhance import Color
 from argparse import ArgumentParser, Namespace
 import gc
 from typing import *
@@ -170,11 +171,12 @@ def make_diff(img:npimg_u8, adv:npimg_u8) -> npimg_f32:
   diff = minmax_norm(d)
   return diff
 
-def img_to_red(im:npimg_u8, shift:int=25) -> npimg_u8:
-  im = np.copy(im).astype(np.uint16)
-  im[:, :, 0] += shift
-  im = im.clip(0, 255)
-  return im.astype(np.uint8)
+def img_to_red(im:npimg_u8, shift:int=32) -> npimg_u8:
+  im = np.zeros_like(im)
+  im[:, :, 0] = 255 - shift
+  im[:, :, 1] = min(shift * 2, 255)
+  im[:, :, 2] = min(shift * 2, 255)
+  return im
 
 def img_to_grey(im:npimg_u8) -> npimg_u8:
   img = Image.fromarray(im).convert('L')

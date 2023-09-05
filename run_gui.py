@@ -25,7 +25,6 @@ class App:
     self.predictor: SamPredictor = None
     self.img: npimg_u8 = None
     self.img_red: npimg_u8 = None
-    self.img_grey: npimg_u8 = None
 
     self.setup_gui()
     self.init_workspace()
@@ -64,15 +63,22 @@ class App:
       tk.Entry(frm1, textvariable=self.var_fp).pack(side=tk.LEFT, expand=tk.YES, fill=tk.X)
       tk.Button(frm1, text='Open..', command=self._open).pack(side=tk.RIGHT)
 
-    # bottom: display
+    # mid: display
     frm2 = ttk.Frame(wnd)
     frm2.pack(anchor=tk.CENTER, expand=tk.YES, fill=tk.BOTH)
     if True:
       pv = ttk.Label(frm2)
       pv.bind('<Button-1>', lambda evt: self.infer(evt))
       pv.bind('<Button-3>', lambda evt: self._show())
-      pv.pack(side=tk.LEFT, fill=tk.X, expand=tk.YES)
+      pv.pack(side=tk.LEFT, fill=tk.X, expand=tk.YES)    # NOTE: must left-align for coord transform
       self.pv = pv
+
+    # bottom: help
+    frm3 = ttk.Frame(wnd)
+    frm3.pack(side=tk.BOTTOM, anchor=tk.S, expand=tk.YES, fill=tk.X)
+    if True:
+      lbl = ttk.Label(frm3, text='>> Left click: put a pointer, Right click: clear the pointer')
+      lbl.pack(side=tk.LEFT, fill=tk.X, expand=tk.YES)
 
   def _open(self):
     fp = tkfdlg.askopenfilename()
@@ -111,8 +117,7 @@ class App:
     self.predictor.set_image(self.img)
     
     if 'overlays':
-      self.img_red  = img_to_red (self.img, RED_SHIFT)
-      self.img_grey = img_to_grey(self.img)
+      self.img_red = img_to_red(self.img, RED_SHIFT)
 
   def infer(self, evt:tk.Event):
     if self.predictor is None:
@@ -142,7 +147,7 @@ class App:
     print(f'>> piou: {iou_predictions.item()}')
 
     mask = np.expand_dims(masks_bin[0], -1)   # [H, W, C=1]
-    seg = self.img_red * mask + self.img_grey * ~mask
+    seg = self.img_red * mask + self.img * ~mask
     self._show(seg)
 
 
