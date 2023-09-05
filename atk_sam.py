@@ -12,7 +12,7 @@ except ImportError:
   raise
 
 DATA_ROOT = DATASET_PATH['sam']
-HIST_FILE = BASE_PATH / 'atk_sam.json'
+HIST_FILE = OUT_PATH / 'atk_sam.json'
 
 
 @timer

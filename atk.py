@@ -129,7 +129,7 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
   M = fwder.transform_image(b1_to_u8(lim), is_edge=True).bool() if lim is not None else 1.0  # [B, C=3, pH, pW]
   P = fwder.transform_prompts(*prompts)
   Y = make_Y(tgt, img, args.loss_w).to(X.device)
-  if args.force_bce:
+  if tgt is None and args.force_bce:
     Y = torch.zeros_like(Y, device=Y.device, dtype=torch.float32)
   Y_bin = torch.zeros_like(Y) if tgt is None else Y
 
@@ -184,8 +184,8 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
 
   if is_gen_vid:
     try:
-      dxs_rep   = dxs   + [dxs  [-1]] * args.fps * 2
-      preds_rep = preds + [preds[-1]] * args.fps * 2
+      dxs_rep   = [dxs  [0]] * args.fps * 4 + dxs   + [dxs  [-1]] * args.fps * 4
+      preds_rep = [preds[0]] * args.fps * 4 + preds + [preds[-1]] * args.fps * 4
       ImageSequenceClip(dxs_rep,   fps=args.fps).write_videofile(str(args.log_dp / 'pgd_noise.mp4'))
       ImageSequenceClip(preds_rep, fps=args.fps).write_videofile(str(args.log_dp / 'pgd_mask.mp4'))
     except:

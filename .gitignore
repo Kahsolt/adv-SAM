@@ -9,10 +9,4 @@ repo/*
 !repo/*.cmd
 
 # generated
-gen/
 out/
-
-# logs
-log/
-*.log
-*.json

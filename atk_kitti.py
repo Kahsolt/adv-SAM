@@ -9,7 +9,7 @@ from atk_sam import get_parser as get_base_parser
 # annot IDs ref: https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py
 
 DATA_ROOT = DATASET_PATH['kitti'] / 'training'
-HIST_FILE = BASE_PATH / 'atk_kitti.json'
+HIST_FILE = OUT_PATH / 'atk_kitti.json'
 
 
 def load_annot(fp:Path) -> npimg_u16:
