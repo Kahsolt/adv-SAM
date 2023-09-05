@@ -10,7 +10,7 @@ from PIL import Image
 from PIL.ImageTk import PhotoImage
 from traceback import print_exc
 
-from run_sam import *
+from run_cui import *
 
 WINDOW_TITLE = 'SAM interactive'
 WINDOW_SIZE  = (700, 600)
