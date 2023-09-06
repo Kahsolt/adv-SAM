@@ -17,6 +17,9 @@ python atk_vis.py --point 400,200 --cam_meth GradCAM
 REM 有目标: 狗 → 盆子
 python atk_vis.py --point 400,200 --point_tgt 250,550 --cam_meth GradCAM
 
+REM 查看一张图的所有 lim 图
+python vis_lim.py --point 400,200
+
 
 REM 通用攻击配置参数
 REM 1. 攻击方法
