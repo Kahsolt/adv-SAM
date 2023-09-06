@@ -146,6 +146,8 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
         multi_mask:bool=False, log:bool=True) -> Union[Tuple[npimg_u8, npimg_b1, float], Tuple[npimg_u8, List[npimg_b1], List[float]]]:
 
   fwder, prompts, loss_fn = fwd_pack
+  is_tgt = tgt is not None
+  is_lim = lim is not None
 
   b1_to_u8   = lambda x: np.tile((np.expand_dims(x, -1) * 255).astype(np.uint8), reps=(1, 1, 3))
   norm       = lambda x: fwder.norm_image  (x  * 255)    # [0, 1] to normed
@@ -158,13 +160,26 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
   # NOTE: must call `transform_image(img)` first to set up `self.original_size`, before other `transform_*`
   X = fwder.transform_image(img)          # [B, C=3, pH, pW], var-mean normed image, vrng ~[-2.4, 2.4]
   Xo = (denorm(X) * 255).byte().div(255)  # [B, C=3, pH, pW], vrng ~[0.0, 1.0]
-  M = fwder.transform_image(b1_to_u8(lim), is_edge=True).bool() if lim is not None else 1.0  # [B, C=3, pH, pW]
+  M = fwder.transform_image(b1_to_u8(lim), is_edge=True).bool() if is_lim else 1.0  # [B, C=3, pH, pW]
   P = fwder.transform_prompts(*prompts)
-  # load target mask (npimg_b1) or generte target logits
-  Y = make_Y(tgt, img, args.loss_w).to(X.device)
-  if tgt is None and args.loss == AtkLoss.BCE:    # non-tagert for BCE is all zeros
-    Y = torch.zeros_like(Y, device=Y.device, dtype=torch.float32)
+
+  # make target tensor
+  if is_tgt:   # tagerted, load target mask (npimg_b1)
+    Y_bin = torch.from_numpy(tgt).to(X.device)
+    Y_bin.unsqueeze_(0)   # [B, H, W]
+    if args.loss == AtkLoss.BCE:
+      Y = Y_bin.float()
+    else:
+      Y = (Y_bin * args.loss_v + ~Y_bin * args.loss_w).float()
+  else:                 # non-tagerted, generate target logits
+    H, W, _ = img.shape
+    if args.loss == AtkLoss.BCE:  # non-tagert for BCE is all zeros
+      Y = torch.zeros([H, W]).to(X.device, torch.float32)
+    else:                         # otherwise is same-valued logits (as background)
+      Y = torch.ones([H, W]).to(X.device, torch.float32) * args.loss_w
+    Y.unsqueeze_(0)   # [B, H, W]
     Y_bin = Y.bool()
+  assert Y_bin.dtype in ['bool', bool, torch.bool]
 
   # random start
   if args.meth != AtkMeth.FGSM:
@@ -185,7 +200,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
 
       if args.meth == AtkMeth.SegPGD:
         lmbd = i / (args.steps * 2)
-        attacked = mask[0] == Y_bin if args.loss == AtkLoss.BCE else (logits <= Y)
+        attacked = mask[0] == Y_bin
         loss_t = loss_fn( attacked * logits, Y) *      lmbd
         loss_f = loss_fn(~attacked * logits, Y) * (1 - lmbd)
         loss = loss_t + loss_f
@@ -261,7 +276,7 @@ def make_pred(ptor_pack:PtorPack, img:npimg_u8, multi_mask:bool=False, ret_logit
   else:
     return mask[0], piou.item()    # [C=1, H, W] => [H, W]
 
-def make_tgt(ptor:SamPredictor, img:npimg_u8, point_tgt:Union[str, Point])-> npimg_u8:
+def make_tgt(ptor:SamPredictor, img:npimg_u8, point_tgt:Union[str, Point])-> npimg_b1:
   if not point_tgt: return None
 
   img_size = img.shape[:-1]
@@ -285,7 +300,7 @@ def make_Y(tgt:npimg_b1=None, img:npimg_u8=None, w:float=-10.0) -> Tensor:
   return Y.unsqueeze_(0)    # [C=1, oH, oW]
 
 @torch.no_grad()
-def _make_smap(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_u8) -> npimg_f32:
+def _make_smap(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1) -> npimg_f32:
   decode = lambda x: fwder.unresize_image(x)[0].permute(1, 2, 0).cpu().numpy()
 
   fwder, prompts, loss_fn = fwd_pack
@@ -306,7 +321,7 @@ def _make_smap(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_u8) -> npimg_f32:
   return smap
 
 @torch.no_grad()
-def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_u8) -> npimg_f32:
+def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1) -> npimg_f32:
   from pytorch_grad_cam.base_cam import BaseCAM
   from pytorch_grad_cam.activations_and_gradients import ActivationsAndGradients
   from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
@@ -351,7 +366,7 @@ def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_u8) -> npimg_f32:
   cam = cam.mean(axis=-1)         # [H, W]
   return cam
 
-def make_lim(args, img:npimg_u8, tgt:npimg_u8, ptor_pack:PtorPack=None, fwd_pack:FwdPack=None) -> npimg_b1:
+def make_lim(args, img:npimg_u8, tgt:npimg_b1, ptor_pack:PtorPack=None, fwd_pack:FwdPack=None) -> npimg_b1:
   if not args.lim: return None
 
   lim_s: str = args.lim
@@ -401,8 +416,10 @@ def run(args):
   img_tgt = load_img(args.f_tgt) if args.f_tgt else img
   assert img.shape == img_tgt.shape, f'>> image shape of src and tgt mismatch: {img.shape} != {img_tgt.shape}, current not supported :('
   tgt = make_tgt(ptor, img_tgt, args.point_tgt)
+  is_tgt = tgt is not None
   # make lim
   lim = make_lim(args, img, tgt, (ptor, prompts), (fwder, prompts, loss_fn))
+  is_lim = lim is not None
 
   # pred X
   mask, piou = make_pred((ptor, prompts), img)
@@ -421,8 +438,8 @@ def run(args):
     plt.subplot(231) ; plt.imshow(img)            ; plt.title('img')
     plt.subplot(232) ; plt.imshow(mask, cmap)     ; plt.title(f'mask (piou={piou:.5f})')
     plt.subplot(233)
-    if   lim is not None: plt.imshow(lim, cmap)   ; plt.title(f'lim: {args.lim}')
-    elif tgt is not None: plt.imshow(tgt, cmap)   ; plt.title('tgt')
+    if   is_lim:       plt.imshow(lim, cmap)      ; plt.title(f'lim: {args.lim}')
+    elif is_tgt:       plt.imshow(tgt, cmap)      ; plt.title('tgt')
     plt.subplot(234) ; plt.imshow(adv)            ; plt.title('img_adv')
     plt.subplot(235) ; plt.imshow(mask_adv, cmap) ; plt.title(f'mask_adv (piou={piou_adv:.5f})')
     plt.subplot(236) ; plt.imshow(diff, cmap)     ; plt.title('diff (proc)')
@@ -444,7 +461,8 @@ def get_parser() -> ArgumentParser:
   # pgd params
   parser.add_argument('--meth',   default='PGD', choices=ATK_METH, help='attack method')
   parser.add_argument('--loss',   default='MSE', choices=ATK_LOSS, help='attack creterion')
-  parser.add_argument('--loss_w', default=-10,   type=float, help='target output value for non-target, for any loss_fn except BCE')
+  parser.add_argument('--loss_w', default=-10,   type=float, help='target outval for non-targeted and targeted-bg, for any loss_fn except BCE')
+  parser.add_argument('--loss_v', default=10,    type=float, help='target outval for targeted-fg, for any loss_fn except BCE')
   parser.add_argument('--steps',  default=40,    type=int)
   parser.add_argument('--eps',    default=8/255, type=float)
   parser.add_argument('--alpha',  default=1/255, type=float)
@@ -506,6 +524,7 @@ if __name__ == '__main__':
   args = get_args(parser)
 
   if args.f_tgt: assert Path(args.f_tgt).is_file(), '--f_tgt is not a valid filepath'
+  #if args.point_tgt: assert args.loss == AtkLoss.BCE, 'targeted attack only supports --loss BCE'
 
   mk_log(args)
   run(args)
