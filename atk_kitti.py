@@ -3,8 +3,6 @@
 # Create Time: 2023/08/07
 
 from atk import *
-from atk import get_args as get_base_args
-from atk_sam import get_parser as get_base_parser
 
 # annot IDs ref: https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py
 
@@ -114,6 +112,7 @@ def run(args):
   sam = load_sam(args.M)
   ptor = SamPredictor(sam)
   fwder = SamForwarder(sam)
+  loss_fn = make_loss_fn(args)
 
   hist: List = load_json(HIST_FILE, list)
   s = time()
@@ -149,7 +148,7 @@ def run(args):
             else:
               tgt = None
           
-            lim = make_lim(args, img, tgt, prompts, ptor, fwder) if args.lim else None
+            lim = make_lim(args, img, tgt, (ptor, prompts), (fwder, prompts, loss_fn)) if args.lim else None
 
             _, mask_hat, piou_hat = pgd(args, fwder, prompts, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
           else:
@@ -192,23 +191,25 @@ def run(args):
 
 
 def get_parser() -> ArgumentParser:
+  from atk_sam import get_parser as get_base_parser
+
   parser = get_base_parser()
   parser.add_argument('--area_thresh', default=0.05, type=float, help='minimal mask connected area in percentage (<= 1.0) or absolute (> 1)')
   return parser
 
 def get_args(parser:ArgumentParser) -> Namespace:
-  args = get_base_args(parser)
-  #assert args.lim in LIM + ['tgt']
+  from atk_sam import get_args as get_base_args
 
+  args = get_base_args(parser)
   args.f = None
   args.D = 'kitti'
   args.fps = -1
+  args.debug = False
   return args
 
 
 if __name__ == '__main__':
   parser = get_parser()
   args = get_args(parser)
-
   mk_log(args)
   run(args)

@@ -4,7 +4,9 @@
 
 import random
 from tqdm import tqdm
+from enum import Enum
 from datetime import datetime
+from pprint import pprint as pp
 from traceback import print_exc
 
 import torch
@@ -19,17 +21,33 @@ except ImportError:
   HAS_MOVIEPY = False
 
 from utils import *
-from utils import get_parser as get_base_parser, get_args as get_base_args
 from segment_anything.modeling import Sam
 from segment_anything.utils.transforms import ResizeLongestSide
 
-LIM = ['', 'edge', 'smap', 'cam', 'tgt']
+class AtkMeth(Enum):
+  FGSM   = 'FGSM'
+  PGD    = 'PGD'
+  SegPGD = 'SegPGD'
+
+class AtkLoss(Enum):
+  MAE     = 'MAE'
+  MSE     = 'MSE'
+  ClipMAE = 'ClipMAE'
+  ClipMSE = 'ClipMSE'
+  BCE     = 'BCE'
+
+ATK_METH = [x.value for x in AtkMeth]
+ATK_LOSS = [x.value for x in AtkLoss]
 CAM_METH = ['GradCAM', 'HiResCAM', 'ScoreCAM', 'GradCAMPlusPlus', 'AblationCAM', 'XGradCAM', 'EigenCAM', 'FullGrad']
+LIM      = ['', 'edge', 'smap', 'cam', 'tgt']   # or a point coord, use prefix '~' to negate
+SAM_MASK_THRESH = 0.0
 
 class SamForwarder(nn.Module):
 
   def __init__(self, sam:Sam):
     super().__init__()
+
+    assert SAM_MASK_THRESH == sam.mask_threshold, f'sam.mask_threshold ({sam.mask_threshold}) != SAM_MASK_THRESH ({SAM_MASK_THRESH})'
 
     self.model = sam
     self.canvas_size = sam.image_encoder.img_size
@@ -108,13 +126,27 @@ class SamForwarder(nn.Module):
 
     return masks[0], iou_predictions[0]
 
+def make_loss_fn(args):
+  loss_fns = {
+    AtkLoss.MAE:     F.l1_loss,
+    AtkLoss.MSE:     F.mse_loss,
+    AtkLoss.ClipMAE: lambda o, y: F.l1_loss (torch.clamp_min(o, args.loss_w), y),
+    AtkLoss.ClipMSE: lambda o, y: F.mse_loss(torch.clamp_min(o, args.loss_w), y),
+    AtkLoss.BCE:     F.binary_cross_entropy_with_logits,
+  }
+  if args.loss not in loss_fns: raise ValueError(f'unknown loss fn: {args.loss.value}')
+  return loss_fns[args.loss]
 
-@torch.enable_grad()
-def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=None, 
+FwdPack = Tuple[SamForwarder, Prompts, Callable]    # loss_fn
+PtorPack = Tuple[SamPredictor, Prompts]    # loss_fn
+
+
+@torch.no_grad()
+def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=None, 
         multi_mask:bool=False, log:bool=True) -> Union[Tuple[npimg_u8, npimg_b1, float], Tuple[npimg_u8, List[npimg_b1], List[float]]]:
 
-  loss_fn    = F.mse_loss if (tgt is None and not args.force_bce) else F.binary_cross_entropy_with_logits
-  is_01      = lambda x: -1e-5 <= x.min() and x.max() <= 1.0
+  fwder, prompts, loss_fn = fwd_pack
+
   b1_to_u8   = lambda x: np.tile((np.expand_dims(x, -1) * 255).astype(np.uint8), reps=(1, 1, 3))
   norm       = lambda x: fwder.norm_image  (x  * 255)    # [0, 1] to normed
   denorm     = lambda x: fwder.denorm_image(x) / 255.0   # normed to [0, 1]
@@ -123,86 +155,80 @@ def pgd(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_b1=No
   decode_dx  = lambda x: _cvt(minmax_norm(fwder.unresize_image(x.abs())[0], vmax=args.eps) * 255)
   decode_msk = lambda x: _cvt(x * 255)
 
-  # NOTE: must call `transform_image(img)` first to set up `self.original_size`
-  X = fwder.transform_image(img)          # [B, C=3, pH, pW], var-mean normed image, ~ [-2.4, 2.4]
-  Xo = (denorm(X) * 255).byte().div(255)  # [B, C=3, pH, pW], ~ [0.0, 1.0]
+  # NOTE: must call `transform_image(img)` first to set up `self.original_size`, before other `transform_*`
+  X = fwder.transform_image(img)          # [B, C=3, pH, pW], var-mean normed image, vrng ~[-2.4, 2.4]
+  Xo = (denorm(X) * 255).byte().div(255)  # [B, C=3, pH, pW], vrng ~[0.0, 1.0]
   M = fwder.transform_image(b1_to_u8(lim), is_edge=True).bool() if lim is not None else 1.0  # [B, C=3, pH, pW]
   P = fwder.transform_prompts(*prompts)
+  # load target mask (npimg_b1) or generte target logits
   Y = make_Y(tgt, img, args.loss_w).to(X.device)
-  if tgt is None and args.force_bce:
+  if tgt is None and args.loss == AtkLoss.BCE:    # non-tagert for BCE is all zeros
     Y = torch.zeros_like(Y, device=Y.device, dtype=torch.float32)
-  Y_bin = torch.zeros_like(Y) if tgt is None else Y
+    Y_bin = Y.bool()
 
-  if 'random start AX':
-    AX = X.detach().clone()
-    noise = torch.empty_like(X).uniform_(-args.eps, args.eps)
-    noise *= M
-    AX = norm(denorm(AX) + noise)
-  
-  is_gen_vid = HAS_MOVIEPY and args.fps > 0
-  if is_gen_vid:
-    dxs, preds = [], []
+  # random start
+  if args.meth != AtkMeth.FGSM:
+    noise = torch.empty_like(X).uniform_(-args.eps, args.eps) * M
+    AX = norm((Xo + noise).clamp(0.0, 1.0))
+  else:
+    AX = X.clone()
 
-  for i in (tqdm if log else enumerate)(range(args.steps)):
+  is_gen_vid = HAS_MOVIEPY and args.fps > 0 and not args.nolog
+  if is_gen_vid: dxs, preds = [], []
+
+  for i in (tqdm if log else list)(range(args.steps)):
     AX.requires_grad = True
 
-    logits, piou = fwder.forward(AX, *P)    # [B=1, H, W], [B=1]
-    with torch.no_grad():
+    with torch.enable_grad():
+      logits, piou = fwder.forward(AX, *P)    # [B=1, H, W], [B=1]
       mask = logits > fwder.model.mask_threshold
 
-    if args.meth == 'SegPGD':
-      # NOT: THIS OFFSET MAY BE WRONG, BUT KEEP IT AS ORIGINAL IMPL
-      lamb = (i - 1) / (args.steps * 2)
-      good = mask[0] == Y_bin
-      loss_t = F.binary_cross_entropy_with_logits(  good .int() * logits, Y_bin) * lamb
-      loss_f = F.binary_cross_entropy_with_logits((~good).int() * logits, Y_bin) * (1 - lamb)
-      loss = loss_t + loss_f
-    elif args.meth in ['FGSM', 'PGD']:
-      loss = loss_fn(logits, Y)
-    else:
-      raise ValueError(f'unknown loss_fn: {loss_fn}')
+      if args.meth == AtkMeth.SegPGD:
+        lmbd = i / (args.steps * 2)
+        attacked = mask[0] == Y_bin if args.loss == AtkLoss.BCE else (logits <= Y)
+        loss_t = loss_fn( attacked * logits, Y) *      lmbd
+        loss_f = loss_fn(~attacked * logits, Y) * (1 - lmbd)
+        loss = loss_t + loss_f
+      elif args.meth in [AtkMeth.FGSM, AtkMeth.PGD]:
+        loss = loss_fn(logits, Y)
+      else:
+        raise ValueError(f'unknown attack meth: {args.meth.value}')
 
-    with torch.no_grad():
-      if loss.abs() < 1e-5: break     # NOTE: stop early
-      g = grad(loss, AX, loss)[0]
-      delta = g.sign() * M * args.alpha
+    if loss.abs() < 1e-5: break     # NOTE: stop early :)
+    g = grad(loss, AX, loss)[0]
+    delta = g.sign() * M * args.alpha
 
-      AX = denorm(AX.detach()) - delta
-      DX: Tensor = (AX - Xo).clamp(-args.eps, args.eps)
-      AX = norm((Xo + DX).detach().clamp(0.0, 1.0))
+    AX = denorm(AX) - delta
+    DX: Tensor = (AX - Xo).clamp(-args.eps, args.eps)
+    AX = norm((Xo + DX).clamp(0.0, 1.0))
 
     if is_gen_vid:
-      with torch.no_grad():
-        dxs.append(decode_dx(DX))
-        preds.append(np.tile(decode_msk(mask), reps=(1, 1, 3)))
+      dxs  .append(decode_dx(DX))
+      preds.append(np.tile(decode_msk(mask), reps=(1, 1, 3)))
 
-    if log:
-      print(f'>> loss: {loss.item():.5f}, piou: {piou.item():.5f}, masked_area: {(logits > 0).sum() / logits.numel():.3%}')
+    if log: print(f'>> loss: {loss.item():.5f}, piou: {piou.item():.5f}, masked_area: {(logits > 0).sum() / logits.numel():.3%}')
 
   fwder.model.zero_grad()
   gc_everything()
 
   if is_gen_vid:
     try:
-      dxs_rep   = [dxs  [0]] * args.fps * 2 + dxs   + [dxs  [-1]] * args.fps * 4
-      preds_rep = [preds[0]] * args.fps * 2 + preds + [preds[-1]] * args.fps * 4
+      dxs_rep   = [dxs  [0]] * args.fps + dxs   + [dxs  [-1]] * args.fps * 4
+      preds_rep = [preds[0]] * args.fps + preds + [preds[-1]] * args.fps * 4
       ImageSequenceClip(dxs_rep,   fps=args.fps).write_videofile(str(args.log_dp / 'pgd_noise.mp4'))
       ImageSequenceClip(preds_rep, fps=args.fps).write_videofile(str(args.log_dp / 'pgd_mask.mp4'))
     except:
       print_exc()
   
   if log:
-    with torch.no_grad():
-      d: Tensor = torch.abs(Xo - denorm(AX))
-    print('Linf (raw):', d.max().item())
-    print('L1 (raw):', d.mean().item())
+    d: Tensor = torch.abs(Xo - denorm(AX))
+    print('Linf (raw):', d.max() .item())
+    print('L1 (raw):',   d.mean().item())
   
-  if multi_mask:
-    logits, piou = fwder.forward(AX, *P, multi_mask=True)
-    mask = logits > fwder.model.mask_threshold
-    return decode_img(AX), [mask[i].cpu().numpy() for i in range(len(mask))], piou.tolist()
-  else:
-    return decode_img(AX), mask[0].cpu().numpy(), piou.item()
+  logits, piou = fwder.forward(AX, *P, multi_mask=multi_mask)
+  mask = logits > fwder.model.mask_threshold
+  if multi_mask: return decode_img(AX), [mask[i].cpu().numpy() for i in range(len(mask))], piou.tolist()
+  else:          return decode_img(AX), mask[0].cpu().numpy(), piou.item()
 
 
 def _parse_point(coord:str, size:Size) -> Point:
@@ -216,7 +242,7 @@ def _parse_point(coord:str, size:Size) -> Point:
   return point
 
 def make_prompts(point:Union[str, ndarray], img_size:tuple) -> Prompts:
-  if isinstance(point, str):
+  if isinstance(point, str) or point is None:
     point = _parse_point(point, img_size)
     print(f'>> point: {point}')
     coords = np.expand_dims(np.asarray(point, dtype=np.int32), axis=0)
@@ -225,9 +251,10 @@ def make_prompts(point:Union[str, ndarray], img_size:tuple) -> Prompts:
   labels = np.asarray([1], dtype=np.int32)
   return (coords, labels, None, None)
 
-def make_pred(ptor:SamPredictor, img:npimg_u8, prompts:Prompts, multi_mask:bool=False) -> Union[Tuple[npimg_b1, float], Tuple[List[npimg_b1], List[float]]]:
+def make_pred(ptor_pack:PtorPack, img:npimg_u8, multi_mask:bool=False, ret_logits:bool=False) -> Union[Tuple[npimg_b1, float], Tuple[List[npimg_b1], List[float]]]:
+  ptor, prompts = ptor_pack
   ptor.set_image(img)
-  mask, piou, _ = ptor.predict(*prompts, multimask_output=multi_mask)
+  mask, piou, _ = ptor.predict(*prompts, multimask_output=multi_mask, return_logits=ret_logits)
   ptor.reset_image()
   if multi_mask:
     return [mask[i] for i in range(len(mask))], piou.tolist()
@@ -235,26 +262,33 @@ def make_pred(ptor:SamPredictor, img:npimg_u8, prompts:Prompts, multi_mask:bool=
     return mask[0], piou.item()    # [C=1, H, W] => [H, W]
 
 def make_tgt(ptor:SamPredictor, img:npimg_u8, point_tgt:Union[str, Point])-> npimg_u8:
+  if not point_tgt: return None
+
   img_size = img.shape[:-1]
   prompts_tgt = make_prompts(point_tgt, img_size)
-  tgt, _ = make_pred(ptor, img, prompts_tgt)
+  tgt, _ = make_pred((ptor, prompts_tgt), img)
   return tgt
 
 def make_Y(tgt:npimg_b1=None, img:npimg_u8=None, w:float=-10.0) -> Tensor:
-  if tgt is not None:
+  '''
+    non-targeted: (img.shape, loss_w) -> Tensor
+    targeted: npimg_b1 -> Tensor
+  '''
+
+  if tgt is not None:   # targeted
     # value in {0, 1}
     Y = torch.from_numpy(tgt).float()
-  else:
+  else:                 # non-targeted
     # value in {w}, where w is a large negative
     H, W, _ = img.shape
     Y = torch.ones([H, W]) * w
   return Y.unsqueeze_(0)    # [C=1, oH, oW]
 
 @torch.no_grad()
-def _make_smap(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_u8) -> npimg_u8:
-  loss_fn = F.mse_loss if tgt is None else F.binary_cross_entropy_with_logits
+def _make_smap(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_u8) -> npimg_f32:
   decode = lambda x: fwder.unresize_image(x)[0].permute(1, 2, 0).cpu().numpy()
 
+  fwder, prompts, loss_fn = fwd_pack
   X = fwder.transform_image(img)
   P = fwder.transform_prompts(*prompts)
   Y = make_Y(tgt, img, args.loss_w).to(X.device)
@@ -267,20 +301,12 @@ def _make_smap(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npim
   g = grad(loss, X, loss)[0]
   psmap = F.tanh(g.abs())
   psmap /= psmap.max()
-  smap: npimg_f32 = decode(psmap)    #[H, W, C=3]
-  smap = smap.mean(axis=-1)
-  lim = smap > args.smap_w
-
-  if args.vis:
-    plt.subplot(121) ; plt.title('lim')  ; plt.imshow(lim)
-    plt.subplot(122) ; plt.title('smap') ; plt.imshow(smap)
-    plt.suptitle(f'smap_w: {args.smap_w}')
-    plt.show()
-
-  return lim
+  smap: npimg_f32 = decode(psmap)   # [H, W, C=3]
+  smap = smap.mean(axis=-1)         # [H, W]
+  return smap
 
 @torch.no_grad()
-def _make_cam(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg_u8) -> npimg_u8:
+def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_u8) -> npimg_f32:
   from pytorch_grad_cam.base_cam import BaseCAM
   from pytorch_grad_cam.activations_and_gradients import ActivationsAndGradients
   from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
@@ -293,7 +319,7 @@ def _make_cam(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg
     def __call__(self, logits:Tensor):
       return self.loss_fn(logits, self.mask)
   
-  loss_fn = F.mse_loss if tgt is None else F.binary_cross_entropy_with_logits
+  fwder, prompts, loss_fn = fwd_pack
   decode = lambda x: fwder.unresize_image(x)[0].permute(1, 2, 0).cpu().numpy()
 
   X = fwder.transform_image(img)
@@ -309,78 +335,84 @@ def _make_cam(args, fwder:SamForwarder, prompts:Prompts, img:npimg_u8, tgt:npimg
   cam_peeper: BaseCAM = locals()[args.cam_meth](fwder, L)
   with torch.enable_grad():
     cam = cam_peeper(input_tensor=X, targets=T, eigen_smooth=False)
-  del X, P, Y, L, T
-  cam_peeper.activations_and_grads: ActivationsAndGradients
-  cam_peeper.activations_and_grads.activations.clear()
-  cam_peeper.activations_and_grads.gradients  .clear()
-  cam_peeper.activations_and_grads.handles    .clear()
-  del cam_peeper
 
   # unhijack .forward()
   fwder.forward = fwder.forward_orignal
 
-  cam = decode(torch.from_numpy(cam).unsqueeze_(1))
-  cam = cam.mean(axis=-1)
-  lim = cam > args.cam_w
-  
-  if args.vis:
-    #visual = show_cam_on_image(X, cam, use_rgb=True)
-    
-    plt.subplot(121) ; plt.title('lim') ; plt.imshow(lim)
-    plt.subplot(122) ; plt.title('cam') ; plt.imshow(cam)
-    plt.suptitle(f'cam_w: {args.cam_w}')
-    plt.show()
+  del X, P, Y, L, T
+  a_g: ActivationsAndGradients = cam_peeper.activations_and_grads
+  a_g.activations.clear()
+  a_g.gradients  .clear()
+  a_g.handles    .clear()
+  del cam_peeper, a_g
 
+  cam_t = torch.from_numpy(cam).unsqueeze_(1)
+  cam: npimg_f32 = decode(cam_t)  # [H, W, C=3]
+  cam = cam.mean(axis=-1)         # [H, W]
   return cam
 
-def make_lim(args, img:npimg_u8, tgt:npimg_u8, prompts:Prompts, ptor:SamPredictor, fwder:SamForwarder) -> npimg_b1:
+def make_lim(args, img:npimg_u8, tgt:npimg_u8, ptor_pack:PtorPack=None, fwd_pack:FwdPack=None) -> npimg_b1:
+  if not args.lim: return None
+
   lim_s: str = args.lim
   inv = False
   if lim_s.startswith('~'):
     lim_s = lim_s[1:]
     inv = True
 
-  if lim_s == 'edge':
-    lim = get_edge(img, args.edge_w)
-  elif lim_s == 'smap':
-    lim = _make_smap(args, fwder, prompts, img, tgt)
-  elif lim_s == 'cam':
-    lim = _make_cam(args, fwder, prompts, img, tgt)
-  elif lim_s == 'tgt':
-    lim = ~tgt
+  if   lim_s == 'edge': lim =  get_edge (                img     ) > args.edge_w
+  elif lim_s == 'smap': lim = _make_smap(args, fwd_pack, img, tgt) > args.smap_w
+  elif lim_s == 'cam':  lim = _make_cam (args, fwd_pack, img, tgt) > args.cam_w
+  elif lim_s == 'tgt':  lim = tgt
   else:   # it should be a point coord
+    ptor, _ = ptor_pack
     prompts = make_prompts(lim_s, img.shape[:-1])
-    mask, _ = make_pred(ptor, img, prompts)
+    mask, _ = make_pred((ptor, prompts), img)
     lim = mask > ptor.model.mask_threshold
 
   if inv: lim = ~lim
+
+  if args.show:
+    #plt.clf()
+    #visual = show_cam_on_image(img, cam, use_rgb=True)
+    #plt.imshow(visual)
+    #plt.show()
+    
+    plt.clf()
+    plt.subplot(121) ; plt.title('img') ; plt.imshow(img)
+    plt.subplot(122) ; plt.title('lim') ; plt.imshow(lim)
+    plt.show()
+
   return lim
 
 
 def run(args):
-  # model
+  # model & loss
   sam = load_sam(args.M)
   ptor = SamPredictor(sam)
   fwder = SamForwarder(sam)
+  loss_fn = make_loss_fn(args)
 
   # image
   img = load_img(args.f)  # [H, W, C]
   # make prompts
   prompts = make_prompts(args.point, img.shape[:-1])
   # make tgt
-  tgt = make_tgt(ptor, img, args.point_tgt) if args.point_tgt else None
+  img_tgt = load_img(args.f_tgt) if args.f_tgt else img
+  assert img.shape == img_tgt.shape, f'>> image shape of src and tgt mismatch: {img.shape} != {img_tgt.shape}, current not supported :('
+  tgt = make_tgt(ptor, img_tgt, args.point_tgt)
   # make lim
-  lim = make_lim(args, img, tgt, prompts, ptor, fwder) if args.lim else None
+  lim = make_lim(args, img, tgt, (ptor, prompts), (fwder, prompts, loss_fn))
 
   # pred X
-  mask, piou = make_pred(ptor, img, prompts)
+  mask, piou = make_pred((ptor, prompts), img)
   # attack
-  adv, mask_adv, piou_adv = pgd(args, fwder, prompts, img, tgt=tgt, lim=lim)
+  adv, mask_adv, piou_adv = pgd(args, (fwder, prompts, loss_fn), img, tgt=tgt, lim=lim)
   # delta
   diff = make_diff(img, adv)
   # pred AX
   if not 'loopback to predictor':
-    mask_adv, piou_adv = make_pred(ptor, adv, prompts)
+    mask_adv, piou_adv = make_pred((ptor, prompts), adv)
 
   if 'show':
     cmap = 'gray'
@@ -388,31 +420,36 @@ def run(args):
     plt.clf()
     plt.subplot(231) ; plt.imshow(img)            ; plt.title('img')
     plt.subplot(232) ; plt.imshow(mask, cmap)     ; plt.title(f'mask (piou={piou:.5f})')
-    if lim is not None:
-      plt.subplot(233) ; plt.imshow(lim, cmap)    ; plt.title(f'lim: {args.lim}')
+    plt.subplot(233)
+    if   lim is not None: plt.imshow(lim, cmap)   ; plt.title(f'lim: {args.lim}')
+    elif tgt is not None: plt.imshow(tgt, cmap)   ; plt.title('tgt')
     plt.subplot(234) ; plt.imshow(adv)            ; plt.title('img_adv')
     plt.subplot(235) ; plt.imshow(mask_adv, cmap) ; plt.title(f'mask_adv (piou={piou_adv:.5f})')
     plt.subplot(236) ; plt.imshow(diff, cmap)     ; plt.title('diff (proc)')
     plt.suptitle(f'point: {prompts[0][0]}')
     plt.tight_layout()
-    fp = args.log_dp / 'atk_sam.png'
-    plt.savefig(fp, dpi=600)
-    print(f'>> savefig to {fp}')
+    if args.nolog:
+      plt.show()
+    else:
+      fp = args.log_dp / 'atk_sam.png'
+      plt.savefig(fp, dpi=600)
+      print(f'>> savefig to {fp}')
     plt.close()
 
 
 def get_parser() -> ArgumentParser:
+  from utils import get_parser as get_base_parser
+
   parser = get_base_parser()
   # pgd params
-  parser.add_argument('--meth',   default='PGD', choices=['FSGM', 'PGD', 'SegPGD'])
+  parser.add_argument('--meth',   default='PGD', choices=ATK_METH, help='attack method')
+  parser.add_argument('--loss',   default='MSE', choices=ATK_LOSS, help='attack creterion')
+  parser.add_argument('--loss_w', default=-10,   type=float, help='target output value for non-target, for any loss_fn except BCE')
   parser.add_argument('--steps',  default=40,    type=int)
   parser.add_argument('--eps',    default=8/255, type=float)
   parser.add_argument('--alpha',  default=1/255, type=float)
-  # non-targeted target
-  parser.add_argument('--loss_w',  default=-10,   type=float, help='factor for non-targeted attack')
-  parser.add_argument('--force_bce', action='store_true', help='force use BCE rather than MSE')
   # limit modifiable area
-  parser.add_argument('--lim',      default='',    type=str,   help='limit PGD to edge/smap/cam area, or predicted mask by point coord')
+  parser.add_argument('--lim',      default='',    type=str,   help=f'limit PGD to edge/smap/cam area, choose value from {LIM}; or predicted mask area, set to a point coord')
   parser.add_argument('--edge_w',   default=0.1,   type=float, help='sobel edge threshold')
   parser.add_argument('--smap_w',   default=0.5,   type=float, help='saliency map threshold')
   parser.add_argument('--cam_w',    default=0.1,   type=float, help='clf attn map threshold')
@@ -420,37 +457,55 @@ def get_parser() -> ArgumentParser:
   # misc
   parser.add_argument('--fps',   default=2,      type=int, help='export video FPS, set -1 to disable')
   parser.add_argument('--seed',  default=114514, type=int, help='rand seed')
+  parser.add_argument('--nolog', action='store_true', help='do not save logs')
   parser.add_argument('--debug', action='store_true', help='show detailed pgd log by step')
-  parser.add_argument('--vis', action='store_true', help='show generated --lim')
+  parser.add_argument('--show',  action='store_true', help='show generated --lim')
   return parser
 
 def get_args(parser:ArgumentParser) -> Namespace:
+  from utils import get_args as get_base_args
+
+  # fix seed
   args = get_base_args(parser)
   seed_everything(args.seed)
 
-  # param check
-  #assert args.lim in LIM or ',' in args.lim, 'invalid --lim'
-  # override
-  if args.meth == 'FSGM':
+  # type convert
+  args.meth = AtkMeth(args.meth)
+  args.loss = AtkLoss(args.loss)
+
+  # force override
+  if args.meth == AtkMeth.FGSM:
     if args.steps != 1:
-      print('warn: force override --steps to 1 for FSGM method')
-    args.steps = 1
-    args.alpha = args.eps
-  # force verbose
+      print('warn: force override --steps for FGSM method')
+      args.steps = 1
+    if args.alpha != args.eps:
+      print('warn: force override --alpha for FGSM method')
+      args.alpha = args.eps
+
+  # force verbose for single run
   args.debug = True
+
   return args
 
 def mk_log(args):
-  args.log_dp = OUT_PATH / str(datetime.now()).replace(' ', '_').replace(':', '')
-  args.log_dp.mkdir()
-  save_json(vars(args), args.log_dp / 'args.json')
+  if args.nolog:
+    args.fps = -1
+  else:
+    args.argv = ' '.join(sys.argv)
+    args.log_dp = OUT_PATH / str(datetime.now()).replace(' ', '_').replace(':', '')
+    args.log_dp.mkdir()
+    save_json(vars(args), args.log_dp / 'args.json')
+  pp(vars(args))
 
 
 if __name__ == '__main__':
   parser = get_parser()
   parser.add_argument('--point',     help='point coord formatted as h,w; e.g. 0.3,0.4 or 200,300')
-  parser.add_argument('--point_tgt', help='alike --point, but specify target mask point, run targetd attack')
+  parser.add_argument('--point_tgt', help='alike --point, but specify target mask point to run targeted attack; default image is -f')
+  parser.add_argument('--f_tgt',     help='alike -f, but specify target image filepath, change image of --point_tgt')
   args = get_args(parser)
+
+  if args.f_tgt: assert Path(args.f_tgt).is_file(), '--f_tgt is not a valid filepath'
 
   mk_log(args)
   run(args)

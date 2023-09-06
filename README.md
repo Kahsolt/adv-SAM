@@ -24,6 +24,31 @@ Do not worry, our paper is on the way :) 🎉🎉🎉
 - see cmdline exmpales in `run.cmd`
 
 
+### Experiments
+
+⚪ non-targeted
+
+ℹ It is technically a simple flat-color target valued `loss_w`
+
+| loss\meth | FGSM | PGD | SegPGD |
+| :-: | :-: | :-: | :-: |
+| MAE     |     |     |     |
+| MSE     |     |     |     |
+| ClipMAE |     |     |     |
+| ClipMSE |     |     |     |
+| BCE     |     |     |     |
+
+⚪ targetd
+
+| loss\meth | FGSM | PGD | SegPGD |
+| :-: | :-: | :-: | :-: |
+| MAE     |     |     |     |
+| MSE     |     |     |     |
+| ClipMAE |     |     |     |
+| ClipMSE |     |     |     |
+| BCE     |     |     |     |
+
+
 ### Dataset
 
 - segment-anything dataset: [https://ai.meta.com/datasets/segment-anything/](https://ai.meta.com/datasets/segment-anything/)

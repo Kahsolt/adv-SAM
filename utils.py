@@ -2,13 +2,14 @@
 # Author: Armit
 # Create Time: 2023/07/05 
 
+import os
 import json
 import random
 from time import time
+from enum import Enum
 from pathlib import Path
 from PIL import Image, ImageFilter
 from PIL.Image import Image as PILImage
-from PIL.ImageEnhance import Color
 from argparse import ArgumentParser, Namespace
 import gc
 from typing import *
@@ -70,13 +71,14 @@ Prompts   = Tuple[ndarray, ndarray, None, None]
 def seed_everything(seed:int):
   print('>> global seed:', seed)
   random.seed(seed)
+  os.environ['PYTHONHASHSEED'] = str(seed)
   np.random.seed(seed)
   torch.manual_seed(seed)
-  if device == 'cuda':
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.enabled = False
-    #torch.backends.cudnn.benchmark = True
-    #torch.backends.cudnn.deterministic = True
+  torch.cuda.manual_seed(seed)
+  torch.cuda.manual_seed_all(seed)
+  torch.backends.cudnn.enabled = True
+  torch.backends.cudnn.benchmark = False
+  torch.backends.cudnn.deterministic = True
 
 def timer(fn):
   def wrapper(*args, **kwargs):
@@ -156,11 +158,10 @@ def show_anns(anns:Dict[str, Any]):
   ax.set_autoscale_on(False)
   ax.imshow(img)
 
-def get_edge(im:npimg_u8, thresh:float=0.1) -> npimg_b1:
+def get_edge(im:npimg_u8) -> npimg_f32:
   assert is_npimg_u8(im), 'expect npimg of np.uint8'
-  img = Image.fromarray(im)
-  img = img.convert('RGB').filter(ImageFilter.FIND_EDGES).convert('L')
-  return np.asarray(img) > (thresh * 255.0)
+  img = Image.fromarray(im).convert('RGB').filter(ImageFilter.FIND_EDGES).convert('L')
+  return np.asarray(img, dtype=np.float32) / 255.
 
 def make_diff(img:npimg_u8, adv:npimg_u8) -> npimg_f32:
   im0 = img / 255.0
@@ -218,7 +219,8 @@ def load_json(fp:Path, default:Any=dict) -> Dict:
 
 def save_json(data:Any, fp:Path):
   def _cvt(v:Any) -> Any:
-    if isinstance(v, Path): return str(v)
+    if   isinstance(v, Path): return str(v)
+    elif isinstance(v, Enum): return str(v)
     else: return v
 
   with open(fp, 'w', encoding='utf-8') as fh:
@@ -239,7 +241,6 @@ def get_param_cnt(model:nn.Module) -> int:
 def get_parser() -> ArgumentParser:
   parser = ArgumentParser()
   parser.add_argument('-M', default='vit_b', choices=SAM_CKPTS.keys(), help='model checkpoint')
-  parser.add_argument('-B', default=1, type=int, help='batch size (not used, no impl)')
   parser.add_argument('-D', choices=DATASET_PATH.keys(), help='dataset name')
   parser.add_argument('-f', default=SAM_DEMO_FILE, help='path to image file')
   return parser
@@ -249,5 +250,5 @@ def get_args(parser:ArgumentParser=None) -> Namespace:
   args = parser.parse_args()
 
   if not args.D: assert Path(args.f).is_file(), f'>> {args.f} is not a file'
-  args.argv = ' '.join(sys.argv)
+
   return args

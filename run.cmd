@@ -21,15 +21,18 @@ python atk_vis.py --point 400,200 --point_tgt 250,550 --cam_meth GradCAM
 REM 通用攻击配置参数
 REM 1. 攻击方法
 python atk.py --point 400,200 --meth SegPGD
-REM 2. 攻击强度
+REM 2. 损失函数
+python atk.py --point 400,200 --loss BCE
+REM 3. 攻击强度
 python atk.py --point 400,200 --step 40 --eps 0.1 --alpha 0.01
 
 
 REM 无目标攻击：e.g. 指针指向 狗 → 预测出 全黑
-REM 命令行比有目标攻击多 --loss_w, --force_bce 两个 **互斥的** 可选选项
+REM 命令行比有目标攻击多一个 --loss_w 选项
 python atk.py --point 400,200
 python atk.py --point 400,200 --loss_w -4
-python atk.py --point 400,200 --force_bce
+REM 只有 BCE 不需要 --loss_w, 其他都需要
+python atk.py --point 400,200 --loss BCE
 
 REM 无目标攻击 + 限制修改区域
 REM 1. 仅修改 边缘
@@ -60,6 +63,9 @@ python atk.py --point 400,200 --point_tgt 250,550 --lim 400,600
 REM 5. 仅修改 lim点原始预测 以外的区域 (非狗)
 python atk.py --point 400,200 --point_tgt 250,550 --lim ~400,200
 
+
+REM 跨图像攻击
+python atk.py --point 400,200 --point_tgt 250,550 --f_tgt repo\segment-anything\notebooks\images\groceries.jpg
 
 
 REM 跑整个 SAM 数据集

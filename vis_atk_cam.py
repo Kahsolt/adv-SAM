@@ -5,40 +5,44 @@
 from atk import *
 from atk import _make_cam as make_cam
 
+# visualize comparing cam on clean & adv image
 
 def run(args):
-  # model
+  # model & loss
   sam = load_sam(args.M)
   ptor = SamPredictor(sam)
   fwder = SamForwarder(sam)
+  loss_fn = make_loss_fn(args)
 
   # image
   img = load_img(args.f)  # [H, W, C]
   # make prompts
   prompts = make_prompts(args.point, img.shape[:-1])
+  ptor_pack = ptor, prompts
+  fwd_pack = fwder, prompts, loss_fn
   # make tgt
   tgt = make_tgt(ptor, img, args.point_tgt) if args.point_tgt else None
   # make lim
-  lim = make_lim(args, img, tgt, prompts, ptor, fwder) if args.lim else None
+  lim = make_lim(args, img, tgt, ptor_pack, fwd_pack) if args.lim else None
 
   # cam X
-  cam = make_cam(args, fwder, prompts, img, tgt)
+  cam = make_cam(args, fwd_pack, img, tgt)
   gc_everything()
 
   # pred X
-  mask, piou = make_pred(ptor, img, prompts)
+  mask, piou = make_pred(ptor_pack, img)
 
   # attack
-  adv, mask_adv, piou_adv = pgd(args, fwder, prompts, img, tgt=tgt, lim=lim)
+  adv, mask_adv, piou_adv = pgd(args, fwd_pack, img, tgt=tgt, lim=lim)
   # cam AX
-  cam_adv = make_cam(args, fwder, prompts, adv, tgt)
+  cam_adv = make_cam(args, fwd_pack, adv, tgt)
   # pred AX
   if not 'loopback to predictor':
-    mask_adv, piou_adv = make_pred(ptor, adv, prompts)
-    
+    mask_adv, piou_adv = make_pred(ptor_pack, adv)
+
   if 'show':
-    cmap_hot = 'rainbow'
-    cmap_bin = 'gray'
+    cmap_hot = 'turbo'
+    cmap_bin = 'binary'
     plt.figure(figsize=(10, 6))
     plt.clf()
     plt.subplot(231) ; plt.imshow(img)                ; plt.title('img')
@@ -61,5 +65,4 @@ if __name__ == '__main__':
   parser.add_argument('--point_tgt', help='alike --point, but specify target mask point, run targetd attack')
   args = get_args(parser)
 
-  mk_log(args)
   run(args)
