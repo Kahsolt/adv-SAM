@@ -21,11 +21,14 @@ def run(args):
   fwd_pack = fwder, prompts, loss_fn
   # make tgt
   tgt = make_tgt(ptor, img, args.point_tgt) if args.point_tgt else None
+  gc_everything()
 
   # --lim
   edge = get_edge(img)
+  gc_everything()
   smap = make_smap(args, fwd_pack, img, tgt)
-  cam  = make_cam (args, fwd_pack, img, tgt)
+  gc_everything()
+  cam  = make_cam(args, fwd_pack, img, tgt)
   gc_everything()
 
   cmap = 'turbo'
@@ -37,7 +40,9 @@ def run(args):
   plt.subplot(224) ; plt.imshow(cam,  cmap) ; plt.title(f'cam: {args.cam_meth} ({args.cam_w})')
   plt.suptitle(f'point: {prompts[0][0]}' + (f'  point_tgt: {args.point_tgt}' if args.point_tgt else ''))
   plt.tight_layout()
-  plt.show()
+  fp = args.log_dp / 'vis_lim.png'
+  plt.savefig(fp, dpi=600)
+  print(f'>> savefig to {fp}')
   plt.close()
 
   edge_bin = edge > args.edge_w
@@ -53,7 +58,9 @@ def run(args):
   plt.subplot(224) ; plt.imshow(cam_bin,  cmap) ; plt.title(f'{args.cam_meth}: {args.cam_w}')
   plt.suptitle(f'point: {prompts[0][0]}' + (f'  point_tgt: {args.point_tgt}' if args.point_tgt else ''))
   plt.tight_layout()
-  plt.show()
+  fp = args.log_dp / 'vis_lim_binary.png'
+  plt.savefig(fp, dpi=600)
+  print(f'>> savefig to {fp}')
   plt.close()
 
 
@@ -63,4 +70,5 @@ if __name__ == '__main__':
   parser.add_argument('--point_tgt', help='alike --point, but specify target mask point, run targetd attack')
   args = get_args(parser)
 
+  mk_log(args)
   run(args)

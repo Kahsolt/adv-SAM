@@ -47,6 +47,9 @@ def run(args):
           mask_gt: npimg_b1 = np.ascontiguousarray(decode(annot['segmentation']), dtype=bool)
           piou_gt: float = annot['predicted_iou']
         
+        fwd_pack = fwder, prompts, loss_fn
+        ptor_pack = ptor, prompts
+
         if args.atk:
           if args.tgt:
             annots_tgt = annot
@@ -56,11 +59,11 @@ def run(args):
           else:
             tgt = None
         
-          lim = make_lim(args, img, tgt, (ptor, prompts), (fwder, prompts, loss_fn)) if args.lim else None
+          lim = make_lim(args, img, tgt, ptor_pack, fwd_pack)
 
-          _, mask_hat, piou_hat = pgd(args, fwder, prompts, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
+          _, mask_hat, piou_hat = pgd(args, fwd_pack, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
         else:
-          mask_hat, piou_hat = make_pred(ptor, img, prompts, multi_mask=args.multi_mask)
+          mask_hat, piou_hat = make_pred(ptor_pack, img, multi_mask=args.multi_mask)
 
         iou_cnt += 1
         iou_sum += get_iou_auto(mask_hat, mask_gt)

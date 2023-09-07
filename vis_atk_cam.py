@@ -21,9 +21,11 @@ def run(args):
   ptor_pack = ptor, prompts
   fwd_pack = fwder, prompts, loss_fn
   # make tgt
-  tgt = make_tgt(ptor, img, args.point_tgt) if args.point_tgt else None
+  tgt = make_tgt(ptor, img, args.point_tgt)
+  gc_everything()
   # make lim
-  lim = make_lim(args, img, tgt, ptor_pack, fwd_pack) if args.lim else None
+  lim = make_lim(args, img, tgt, ptor_pack, fwd_pack)
+  gc_everything()
 
   # cam X
   cam = make_cam(args, fwd_pack, img, tgt)
@@ -31,14 +33,18 @@ def run(args):
 
   # pred X
   mask, piou = make_pred(ptor_pack, img)
+  gc_everything()
 
   # attack
   adv, mask_adv, piou_adv = pgd(args, fwd_pack, img, tgt=tgt, lim=lim)
+  gc_everything()
   # cam AX
   cam_adv = make_cam(args, fwd_pack, adv, tgt)
+  gc_everything()
   # pred AX
   if not 'loopback to predictor':
     mask_adv, piou_adv = make_pred(ptor_pack, adv)
+    gc_everything()
 
   if 'show':
     cmap_hot = 'turbo'
@@ -65,4 +71,5 @@ if __name__ == '__main__':
   parser.add_argument('--point_tgt', help='alike --point, but specify target mask point, run targetd attack')
   args = get_args(parser)
 
+  mk_log(args)
   run(args)

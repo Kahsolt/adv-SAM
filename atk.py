@@ -276,8 +276,8 @@ def make_pred(ptor_pack:PtorPack, img:npimg_u8, multi_mask:bool=False, ret_logit
   else:
     return mask[0], piou.item()    # [C=1, H, W] => [H, W]
 
-def make_tgt(ptor:SamPredictor, img:npimg_u8, point_tgt:Union[str, Point])-> npimg_b1:
-  if not point_tgt: return None
+def make_tgt(ptor:SamPredictor, img:npimg_u8, point_tgt:Union[str, ndarray])-> npimg_b1:
+  if point_tgt in ['', None]: return None
 
   img_size = img.shape[:-1]
   prompts_tgt = make_prompts(point_tgt, img_size)
@@ -350,6 +350,7 @@ def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1) -> npimg_f32:
   cam_peeper: BaseCAM = locals()[args.cam_meth](fwder, L)
   with torch.enable_grad():
     cam = cam_peeper(input_tensor=X, targets=T, eigen_smooth=False)
+  fwder.zero_grad()
 
   # unhijack .forward()
   fwder.forward = fwder.forward_orignal
@@ -412,24 +413,26 @@ def run(args):
   img = load_img(args.f)  # [H, W, C]
   # make prompts
   prompts = make_prompts(args.point, img.shape[:-1])
+  fwd_pack = fwder, prompts, loss_fn
+  ptor_pack = ptor, prompts
   # make tgt
   img_tgt = load_img(args.f_tgt) if args.f_tgt else img
   assert img.shape == img_tgt.shape, f'>> image shape of src and tgt mismatch: {img.shape} != {img_tgt.shape}, current not supported :('
   tgt = make_tgt(ptor, img_tgt, args.point_tgt)
   is_tgt = tgt is not None
   # make lim
-  lim = make_lim(args, img, tgt, (ptor, prompts), (fwder, prompts, loss_fn))
+  lim = make_lim(args, img, tgt, ptor_pack, fwd_pack)
   is_lim = lim is not None
 
   # pred X
-  mask, piou = make_pred((ptor, prompts), img)
+  mask, piou = make_pred(ptor_pack, img)
   # attack
-  adv, mask_adv, piou_adv = pgd(args, (fwder, prompts, loss_fn), img, tgt=tgt, lim=lim)
+  adv, mask_adv, piou_adv = pgd(args, fwd_pack, img, tgt=tgt, lim=lim)
   # delta
   diff = make_diff(img, adv)
   # pred AX
   if not 'loopback to predictor':
-    mask_adv, piou_adv = make_pred((ptor, prompts), adv)
+    mask_adv, piou_adv = make_pred(ptor_pack, adv)
 
   if 'show':
     cmap = 'gray'

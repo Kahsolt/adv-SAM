@@ -139,6 +139,9 @@ def run(args):
             point = np.asarray([xy], dtype=np.float32)
             prompts = make_prompts(point, img_size)
 
+          fwd_pack = fwder, prompts, loss_fn
+          ptor_pack = ptor, prompts
+          
           if args.atk:
             if args.tgt:
               oid_tgt = oid
@@ -148,11 +151,11 @@ def run(args):
             else:
               tgt = None
           
-            lim = make_lim(args, img, tgt, (ptor, prompts), (fwder, prompts, loss_fn)) if args.lim else None
+            lim = make_lim(args, img, tgt, ptor_pack, fwd_pack)
 
-            _, mask_hat, piou_hat = pgd(args, fwder, prompts, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
+            _, mask_hat, piou_hat = pgd(args, fwd_pack, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
           else:
-            mask_hat, piou_hat = make_pred(ptor, img, prompts, multi_mask=args.multi_mask)
+            mask_hat, piou_hat = make_pred(ptor_pack, img, multi_mask=args.multi_mask)
 
           if not 'debug':
             plt.figure(figsize=(6, 3), dpi=240)
