@@ -209,7 +209,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
       else:
         raise ValueError(f'unknown attack meth: {args.meth.value}')
 
-    if loss.abs() < 1e-5: break     # NOTE: stop early :)
+    #if loss.abs() < 1e-5: break     # NOTE: stop early :)
     g = grad(loss, AX, loss)[0]
     delta = g.sign() * M * args.alpha
 
@@ -277,7 +277,7 @@ def make_pred(ptor_pack:PtorPack, img:npimg_u8, multi_mask:bool=False, ret_logit
     return mask[0], piou.item()    # [C=1, H, W] => [H, W]
 
 def make_tgt(ptor:SamPredictor, img:npimg_u8, point_tgt:Union[str, ndarray])-> npimg_b1:
-  if point_tgt in ['', None]: return None
+  if point_tgt is None or point_tgt == '': return None
 
   img_size = img.shape[:-1]
   prompts_tgt = make_prompts(point_tgt, img_size)
