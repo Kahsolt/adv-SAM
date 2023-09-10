@@ -228,7 +228,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
   is_gen_vid = HAS_MOVIEPY and args.fps > 0 and not args.nolog
   if is_gen_vid: dxs, preds = [], []
 
-  for i in (tqdm if log else list)(range(args.steps)):
+  for c in (tqdm if log else list)(range(args.steps)):
     AX.requires_grad = True
 
     with torch.enable_grad():
@@ -236,7 +236,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
       mask = logits > fwder.model.mask_threshold
 
       if args.meth == AtkMeth.SegPGD:
-        lmbd = i / (args.steps * 2)
+        lmbd = c / (args.steps * 2)
         attacked = mask[0] == Y_bin
         loss_t = loss_fn( attacked * logits, Y) *      lmbd
         loss_f = loss_fn(~attacked * logits, Y) * (1 - lmbd)
@@ -255,7 +255,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
     AX = norm((Xo + DX).clamp(0.0, 1.0))
 
     if is_gen_vid:
-      dxs  .append(decode_dx(DX))
+      dxs  .append(DX)
       preds.append(np.tile(decode_msk(mask), reps=(1, 1, 3)))
 
     if log: print(f'>> loss: {loss.item():.5f}, piou: {piou.item():.5f}, masked_area: {(logits > 0).sum() / logits.numel():.3%}')
@@ -265,10 +265,27 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
 
   if is_gen_vid:
     try:
-      dxs_rep   = [dxs  [0]] * args.fps + dxs   + [dxs  [-1]] * args.fps * 4
-      preds_rep = [preds[0]] * args.fps + preds + [preds[-1]] * args.fps * 4
+      dxs_dec   = [decode_dx(dx) for dx in dxs]
+      dxs_rep   = [dxs_dec[0]] * args.fps + dxs_dec + [dxs_dec[-1]] * args.fps * 4
+      preds_rep = [preds  [0]] * args.fps + preds   + [preds  [-1]] * args.fps * 4
       ImageSequenceClip(dxs_rep,   fps=args.fps).write_videofile(str(args.log_dp / 'pgd_noise.mp4'))
       ImageSequenceClip(preds_rep, fps=args.fps).write_videofile(str(args.log_dp / 'pgd_mask.mp4'))
+      
+      if 'noise anneal':
+        x, y = prompts[0][0]
+        R = 3
+        dxs_crop: Tensor = torch.cat([dx[:, :, x-R:x+R, y-R:y+R] for dx in dxs], axis=0)
+        deltas = dxs_crop.flatten(2).cpu().numpy()   # [F, C=3, NP=100]
+        F, C, NP = deltas.shape
+        CH_NAME = ['r', 'g', 'b']
+        plt.figure(figsize=(14, 6))
+        for c in range(C):
+          plt.subplot(1, C, c+1)
+          plt.title(CH_NAME[c])
+          for p in range(NP):
+            plt.plot(deltas[:, c, p])
+        plt.tight_layout()
+        plt.savefig(str(args.log_dp / 'pgd_noise_annealing.png'))
     except:
       print_exc()
   
@@ -444,6 +461,7 @@ def make_lim(args, img:npimg_u8, tgt:npimg_b1, ptor_pack:PtorPack=None, fwd_pack
   return lim
 
 
+@timer
 def run(args):
   # model & loss
   sam = load_sam(args.M)
