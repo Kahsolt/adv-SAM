@@ -140,6 +140,43 @@ def make_loss_fn(args):
 FwdPack = Tuple[SamForwarder, Prompts, Callable]    # loss_fn
 PtorPack = Tuple[SamPredictor, Prompts]    # loss_fn
 
+# ↓↓↓ repo\pytorch-grad-cam\pytorch_grad_cam\base_cam.py ↓↓↓
+
+from pytorch_grad_cam.base_cam import BaseCAM
+from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+
+def BaseCAM_forward_hijack(self: BaseCAM, input_tensor: torch.Tensor, targets: List[torch.nn.Module], eigen_smooth: bool = False) -> np.ndarray:
+  if self.cuda: input_tensor = input_tensor.cuda()
+
+  if self.compute_input_gradient:     # False
+    input_tensor = torch.autograd.Variable(input_tensor, requires_grad=True)
+
+  outputs = self.activations_and_grads(input_tensor)      # <= VRAM consuming
+  if targets is None:
+    target_categories = np.argmax(outputs.cpu().data.numpy(), axis=-1)
+    targets = [ClassifierOutputTarget(category) for category in target_categories]
+  
+  if self.uses_gradients:     # True
+    self.model.zero_grad()
+    loss = sum([target(output) for target, output in zip(targets, outputs)])
+    loss.backward(retain_graph=True)
+
+  cam_per_layer = self.compute_cam_per_layer(input_tensor, targets, eigen_smooth)
+  cam_agg = self.aggregate_multi_layers(cam_per_layer)
+
+  # NOTE: cannot find the vram leak?!!
+  self.model.zero_grad()
+  self.target_layers.clear()
+  self.activations_and_grads.release()
+  self.activations_and_grads.handles.clear()
+  self.activations_and_grads.activations.clear()
+  self.activations_and_grads.gradients.clear()
+  gc_everything()
+
+  return cam_agg
+
+# ↑↑↑ repo\pytorch-grad-cam\pytorch_grad_cam\base_cam.py ↑↑↑
+
 
 @torch.no_grad()
 def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=None, 
@@ -321,7 +358,7 @@ def _make_smap(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1) -> npimg_f32:
   return smap
 
 @torch.no_grad()
-def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1) -> npimg_f32:
+def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1, use_cpu:bool=False) -> npimg_f32:
   from pytorch_grad_cam.base_cam import BaseCAM
   from pytorch_grad_cam.activations_and_gradients import ActivationsAndGradients
   from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
@@ -338,29 +375,34 @@ def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1) -> npimg_f32:
   decode = lambda x: fwder.unresize_image(x)[0].permute(1, 2, 0).cpu().numpy()
 
   X = fwder.transform_image(img)
+  if use_cpu: X = X.cpu()
   P = fwder.transform_prompts(*prompts)
+  if use_cpu: P = [p.cpu() if isinstance(p, Tensor) else p for p in P]
   Y = make_Y(tgt, img, args.loss_w).to(X.device)   # [B=1, H, W]
+  if use_cpu: fwder = fwder.cpu()
   L = [fwder.model.mask_decoder.output_upscaling]
   T = [SAMTarget(Y[0], loss_fn)]
 
-  # hijack .forward()
+  # hijack .forward() bind args
   fwder.forward_orignal = fwder.forward
   fwder.forward = lambda x: fwder.forward_orignal(x, *P)[0]
 
-  cam_peeper: BaseCAM = locals()[args.cam_meth](fwder, L)
+  cam_inst: BaseCAM = locals()[args.cam_meth](fwder, L)
+  #cam_inst.forward = lambda *args, **kwargs: BaseCAM_forward_hijack(cam_inst, *args, **kwargs)
   with torch.enable_grad():
-    cam = cam_peeper(input_tensor=X, targets=T, eigen_smooth=False)
-  fwder.zero_grad()
+    cam = cam_inst(input_tensor=X, targets=T, eigen_smooth=False)
 
   # unhijack .forward()
   fwder.forward = fwder.forward_orignal
 
   del X, P, Y, L, T
-  a_g: ActivationsAndGradients = cam_peeper.activations_and_grads
+  a_g: ActivationsAndGradients = cam_inst.activations_and_grads
   a_g.activations.clear()
   a_g.gradients  .clear()
   a_g.handles    .clear()
-  del cam_peeper, a_g
+  del cam_inst, a_g
+
+  if use_cpu: fwder = fwder.to(device)
 
   cam_t = torch.from_numpy(cam).unsqueeze_(1)
   cam: npimg_f32 = decode(cam_t)  # [H, W, C=3]

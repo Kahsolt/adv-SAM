@@ -21,15 +21,11 @@ def run(args):
   fwd_pack = fwder, prompts, loss_fn
   # make tgt
   tgt = make_tgt(ptor, img, args.point_tgt) if args.point_tgt else None
-  gc_everything()
 
   # --lim
   edge = get_edge(img)
-  gc_everything()
   smap = make_smap(args, fwd_pack, img, tgt)
-  gc_everything()
-  cam  = make_cam(args, fwd_pack, img, tgt)
-  gc_everything()
+  cam = make_cam(args, fwd_pack, img, tgt, use_cpu=True)
 
   cmap = 'turbo'
   plt.figure(figsize=(10, 6))
