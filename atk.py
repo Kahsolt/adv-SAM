@@ -36,8 +36,14 @@ class AtkLoss(Enum):
   ClipMSE = 'ClipMSE'
   BCE     = 'BCE'
 
+class AtkFunc(Enum):
+  SIGN    = 'sign'
+  TANH    = 'tanh'
+  LINEAR  = 'linear'
+
 ATK_METH = [x.value for x in AtkMeth]
 ATK_LOSS = [x.value for x in AtkLoss]
+ATK_FUNC = [x.value for x in AtkFunc]
 CAM_METH = ['GradCAM', 'HiResCAM', 'ScoreCAM', 'GradCAMPlusPlus', 'AblationCAM', 'XGradCAM', 'EigenCAM', 'FullGrad']
 LIM      = ['', 'edge', 'smap', 'cam', 'tgt']   # or a point coord, use prefix '~' to negate
 SAM_MASK_THRESH = 0.0
@@ -246,9 +252,19 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
       else:
         raise ValueError(f'unknown attack meth: {args.meth.value}')
 
-    #if loss.abs() < 1e-5: break     # NOTE: stop early :)
+    # NOTE: stop early :)
+    # if loss.abs() < 1e-5: break
+
     g = grad(loss, AX, loss)[0]
-    delta = g.sign() * M * args.alpha
+    # supress small value
+    if args.g_thresh > 0.0:
+      g *= torch.abs(g) > args.g_thresh
+    # make projection
+    if   args.g_func == AtkFunc.SIGN:   fg = g.sign()
+    elif args.g_func == AtkFunc.TANH:   fg = torch.tanh(g * args.g_func_tanh_w)
+    elif args.g_func == AtkFunc.LINEAR: fg = torch.clamp(g * args.g_func_linear_w, min=-1, max=1)
+    # make masked step
+    delta = fg * M * args.alpha
 
     AX = denorm(AX) - delta
     DX: Tensor = (AX - Xo).clamp(-args.eps, args.eps)
@@ -522,8 +538,12 @@ def get_parser() -> ArgumentParser:
 
   parser = get_base_parser()
   # pgd params
-  parser.add_argument('--meth',   default='PGD', choices=ATK_METH, help='attack method')
-  parser.add_argument('--loss',   default='MSE', choices=ATK_LOSS, help='attack creterion')
+  parser.add_argument('--meth',   default='PGD',  choices=ATK_METH, help='attack method')
+  parser.add_argument('--loss',   default='MSE',  choices=ATK_LOSS, help='attack creterion')
+  parser.add_argument('--g_func', default='sign', choices=ATK_FUNC, help='grad project func')
+  parser.add_argument('--g_func_tanh_w',   default=2.0, type=float, help='when g_func=tanh, typically 1e0 (more like linear) ~ 1e3 (more like sign)')
+  parser.add_argument('--g_func_linear_w', default=2.0, type=float, help='when g_func=linear, typically 1 (more flat) ~ 1e3 (more steep)')
+  parser.add_argument('--g_thresh',        default=0.0, type=float, help='grad suppress thresh, typically 1e-5 ~ 1e-3')
   parser.add_argument('--loss_w', default=-10,   type=float, help='target outval for non-targeted and targeted-bg, for any loss_fn except BCE')
   parser.add_argument('--loss_v', default=10,    type=float, help='target outval for targeted-fg, for any loss_fn except BCE')
   parser.add_argument('--steps',  default=40,    type=int)
@@ -553,6 +573,7 @@ def get_args(parser:ArgumentParser) -> Namespace:
   # type convert
   args.meth = AtkMeth(args.meth)
   args.loss = AtkLoss(args.loss)
+  args.g_func = AtkFunc(args.g_func)
 
   # force override
   if args.meth == AtkMeth.FGSM:
