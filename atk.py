@@ -391,7 +391,7 @@ def _make_smap(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1) -> npimg_f32:
   return smap
 
 @torch.no_grad()
-def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1, use_cpu:bool=False) -> npimg_f32:
+def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1, use_cpu:bool=True) -> npimg_f32:
   from pytorch_grad_cam.base_cam import BaseCAM
   from pytorch_grad_cam.activations_and_gradients import ActivationsAndGradients
   from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
