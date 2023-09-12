@@ -25,6 +25,9 @@ git clone https://github.com/jacobgil/pytorch-grad-cam
 REM SegPGD
 git clone https://github.com/u6630774/SegPGD
 
+REM robust-segmentation
+git clone https://github.com/nmndeep/robust-segmentation
+
 POPD
 
 ECHO Done!

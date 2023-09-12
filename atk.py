@@ -21,6 +21,7 @@ except ImportError:
   HAS_MOVIEPY = False
 
 from utils import *
+from hijacks import *
 from segment_anything.modeling import Sam
 from segment_anything.utils.transforms import ResizeLongestSide
 
@@ -35,6 +36,18 @@ class AtkLoss(Enum):
   ClipMAE = 'ClipMAE'
   ClipMSE = 'ClipMSE'
   BCE     = 'BCE'
+  # provided by `nmndeep/robust-segmentation`, these loss are all for multi-class classification
+  JS       = 'JS'
+  COSPGD   = 'COSPGD'
+  SEGPGD   = 'SEGPGD'
+  CE       = 'CE'
+  CE_MSK   = 'CE_MSK'    # `masked_cross_entropy`
+  MRG      = 'MRG'
+  MRG_MSK  = 'MRG_MSK'   # `masked_margin_loss`
+  DLR      = 'DLR'
+  DLR_TGT  = 'DLR_TGT'
+  SLGT     = 'SLGT'      # `single_logits_loss`
+  SLGT_TGT = 'SLGT_TGT'
 
 class AtkFunc(Enum):
   SIGN    = 'sign'
@@ -133,6 +146,9 @@ class SamForwarder(nn.Module):
     return masks[0], iou_predictions[0]
 
 def make_loss_fn(args):
+  # losses from nmndeep/robust-segmentation
+  if args.loss.value in RS_LOSS_DICT: return RS_LOSS_DICT[args.loss.value]
+  # native losses
   loss_fns = {
     AtkLoss.MAE:     F.l1_loss,
     AtkLoss.MSE:     F.mse_loss,
@@ -145,43 +161,6 @@ def make_loss_fn(args):
 
 FwdPack = Tuple[SamForwarder, Prompts, Callable]    # loss_fn
 PtorPack = Tuple[SamPredictor, Prompts]    # loss_fn
-
-# ↓↓↓ repo\pytorch-grad-cam\pytorch_grad_cam\base_cam.py ↓↓↓
-
-from pytorch_grad_cam.base_cam import BaseCAM
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-
-def BaseCAM_forward_hijack(self: BaseCAM, input_tensor: torch.Tensor, targets: List[torch.nn.Module], eigen_smooth: bool = False) -> np.ndarray:
-  if self.cuda: input_tensor = input_tensor.cuda()
-
-  if self.compute_input_gradient:     # False
-    input_tensor = torch.autograd.Variable(input_tensor, requires_grad=True)
-
-  outputs = self.activations_and_grads(input_tensor)      # <= VRAM consuming
-  if targets is None:
-    target_categories = np.argmax(outputs.cpu().data.numpy(), axis=-1)
-    targets = [ClassifierOutputTarget(category) for category in target_categories]
-  
-  if self.uses_gradients:     # True
-    self.model.zero_grad()
-    loss = sum([target(output) for target, output in zip(targets, outputs)])
-    loss.backward(retain_graph=True)
-
-  cam_per_layer = self.compute_cam_per_layer(input_tensor, targets, eigen_smooth)
-  cam_agg = self.aggregate_multi_layers(cam_per_layer)
-
-  # NOTE: cannot find the vram leak?!!
-  self.model.zero_grad()
-  self.target_layers.clear()
-  self.activations_and_grads.release()
-  self.activations_and_grads.handles.clear()
-  self.activations_and_grads.activations.clear()
-  self.activations_and_grads.gradients.clear()
-  gc_everything()
-
-  return cam_agg
-
-# ↑↑↑ repo\pytorch-grad-cam\pytorch_grad_cam\base_cam.py ↑↑↑
 
 
 @torch.no_grad()
@@ -223,6 +202,8 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
     Y.unsqueeze_(0)   # [B, H, W]
     Y_bin = Y.bool()
   assert Y_bin.dtype in ['bool', bool, torch.bool]
+  if args.loss.value in RS_LOSS_DICT:   # binary-clf to multi-class clf target
+    Y = Y_bin.long()
 
   # random start
   if args.meth != AtkMeth.FGSM:
@@ -234,21 +215,27 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
   is_gen_vid = HAS_MOVIEPY and args.fps > 0 and not args.nolog
   if is_gen_vid: dxs, preds = [], []
 
-  for c in (tqdm if log else list)(range(args.steps)):
+  for i in (tqdm if log else list)(range(args.steps)):
     AX.requires_grad = True
 
     with torch.enable_grad():
       logits, piou = fwder.forward(AX, *P)    # [B=1, H, W], [B=1]
       mask = logits > fwder.model.mask_threshold
 
+      loss_fn_step = loss_fn
+      if args.loss.value in RS_LOSS_DICT:
+        logits = make_pseudo_multi_class_logits(logits, is_tgt)
+        if args.loss == AtkLoss.SEGPGD:
+          loss_fn_step = lambda x, y: loss_fn(x, y, t=i, max_t=args.steps)
+
       if args.meth == AtkMeth.SegPGD:
         lmbd = c / (args.steps * 2)
         attacked = mask[0] == Y_bin
-        loss_t = loss_fn( attacked * logits, Y) *      lmbd
-        loss_f = loss_fn(~attacked * logits, Y) * (1 - lmbd)
+        loss_t = loss_fn_step( attacked * logits, Y) *      lmbd
+        loss_f = loss_fn_step(~attacked * logits, Y) * (1 - lmbd)
         loss = loss_t + loss_f
       elif args.meth in [AtkMeth.FGSM, AtkMeth.PGD]:
-        loss = loss_fn(logits, Y)
+        loss = loss_fn_step(logits, Y)
       else:
         raise ValueError(f'unknown attack meth: {args.meth.value}')
 
@@ -261,7 +248,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
       g *= torch.abs(g) > args.g_thresh
     # make projection
     if   args.g_func == AtkFunc.SIGN:   fg = g.sign()
-    elif args.g_func == AtkFunc.TANH:   fg = torch.tanh(g * args.g_func_tanh_w)
+    elif args.g_func == AtkFunc.TANH:   fg = torch.tanh (g * args.g_func_tanh_w)
     elif args.g_func == AtkFunc.LINEAR: fg = torch.clamp(g * args.g_func_linear_w, min=-1, max=1)
     # make masked step
     delta = fg * M * args.alpha
@@ -274,7 +261,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
       dxs  .append(DX)
       preds.append(np.tile(decode_msk(mask), reps=(1, 1, 3)))
 
-    if log: print(f'>> loss: {loss.item():.5f}, piou: {piou.item():.5f}, masked_area: {(logits > 0).sum() / logits.numel():.3%}')
+    if log: print(f'>> loss: {loss.sum().item():.5f}, piou: {piou.item():.5f}, masked_area: {mask.sum() / mask.numel():.3%}')
 
   fwder.model.zero_grad()
   gc_everything()
@@ -368,6 +355,14 @@ def make_Y(tgt:npimg_b1=None, img:npimg_u8=None, w:float=-10.0) -> Tensor:
     H, W, _ = img.shape
     Y = torch.ones([H, W]) * w
   return Y.unsqueeze_(0)    # [C=1, oH, oW]
+
+def make_pseudo_multi_class_logits(logits:Tensor, is_tgt:bool=False) -> Tensor:
+  # [B, H, W] => [B, C=2, H, W]
+  plogits = logits.unsqueeze(1).repeat((1, 2, 1, 1))
+  p, n = (1, 0) if is_tgt else (0, 1)
+  plogits[:, p, :, :] = plogits[:, p, :, :] * (plogits[:, p, :, :] > SAM_MASK_THRESH)
+  plogits[:, n, :, :] = plogits[:, n, :, :] * (plogits[:, n, :, :] < SAM_MASK_THRESH) * -1
+  return plogits
 
 @torch.no_grad()
 def _make_smap(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1) -> npimg_f32:

@@ -39,11 +39,13 @@ if 'repo':
   }
   GRAD_CAM_PATH = REPO_PATH / 'pytorch-grad-cam'
   SEG_PGD_PATH = REPO_PATH / 'SegPGD'
+  ROBUST_SEG_PATH = REPO_PATH / 'robust-segmentation'
 
   import sys
   sys.path.append(str(SAM_PATH))
   sys.path.append(str(GRAD_CAM_PATH))
   sys.path.append(str(SEG_PGD_PATH))
+  sys.path.append(str(ROBUST_SEG_PATH))
   from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
   from segment_anything.modeling import Sam
 
