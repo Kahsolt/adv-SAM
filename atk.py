@@ -296,12 +296,18 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
     d: Tensor = torch.abs(Xo - denorm(AX))
     print('Linf (raw):', d.max() .item())
     print('L1 (raw):',   d.mean().item())
-  
-  logits, piou = fwder.forward(AX, *P, multi_mask=multi_mask)
-  mask = logits > fwder.model.mask_threshold
-  if multi_mask: return decode_img(AX), [mask[i].cpu().numpy() for i in range(len(mask))], piou.tolist()
-  else:          return decode_img(AX), mask[0].cpu().numpy(), piou.item()
 
+  if multi_mask:
+    logits, piou = fwder.forward(AX, *P, multi_mask=multi_mask)
+    mask = logits > fwder.model.mask_threshold
+    return decode_img(AX), [mask[i].cpu().numpy() for i in range(len(mask))], piou.tolist()
+  else:
+    if not 'loopback':
+      logits, piou = fwder.forward(AX, *P, multi_mask=False)
+      mask = logits > fwder.model.mask_threshold
+      return decode_img(AX), mask[0].cpu().numpy(), piou.item()
+    else:
+      return decode_img(AX), mask[0].cpu().numpy(), piou.item()
 
 def _parse_point(coord:str, size:Size) -> Point:
   if coord:
