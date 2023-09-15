@@ -229,7 +229,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
           loss_fn_step = lambda x, y: loss_fn(x, y, t=i, max_t=args.steps)
 
       if args.meth == AtkMeth.SegPGD:
-        lmbd = c / (args.steps * 2)
+        lmbd = i / (args.steps * 2)
         attacked = mask[0] == Y_bin
         loss_t = loss_fn_step( attacked * logits, Y) *      lmbd
         loss_f = loss_fn_step(~attacked * logits, Y) * (1 - lmbd)

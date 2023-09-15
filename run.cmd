@@ -27,7 +27,7 @@ python atk.py --point 400,200 --meth SegPGD
 REM 2. 损失函数
 python atk.py --point 400,200 --loss BCE
 REM 3. 攻击强度
-python atk.py --point 400,200 --step 40 --eps 0.1 --alpha 0.01
+python atk.py --point 400,200 --steps 40 --eps 0.1 --alpha 0.01
 
 
 REM 无目标攻击：e.g. 指针指向 狗 → 预测出 全黑
