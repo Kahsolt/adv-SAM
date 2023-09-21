@@ -248,8 +248,8 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
       g *= torch.abs(g) > args.g_thresh
     # make projection
     if   args.g_func == AtkFunc.SIGN:   fg = g.sign()
-    elif args.g_func == AtkFunc.TANH:   fg = torch.tanh (g * args.g_func_tanh_w)
-    elif args.g_func == AtkFunc.LINEAR: fg = torch.clamp(g * args.g_func_linear_w, min=-1, max=1)
+    elif args.g_func == AtkFunc.TANH:   fg = torch.tanh (g * args.g_func_w)
+    elif args.g_func == AtkFunc.LINEAR: fg = torch.clamp(g * args.g_func_w, min=-1, max=1)
     # make masked step
     delta = fg * M * args.alpha
 
@@ -542,9 +542,8 @@ def get_parser() -> ArgumentParser:
   parser.add_argument('--meth',   default='PGD',  choices=ATK_METH, help='attack method')
   parser.add_argument('--loss',   default='MSE',  choices=ATK_LOSS, help='attack creterion')
   parser.add_argument('--g_func', default='sign', choices=ATK_FUNC, help='grad project func')
-  parser.add_argument('--g_func_tanh_w',   default=2.0, type=float, help='when g_func=tanh, typically 1e0 (more like linear) ~ 1e3 (more like sign)')
-  parser.add_argument('--g_func_linear_w', default=2.0, type=float, help='when g_func=linear, typically 1 (more flat) ~ 1e3 (more steep)')
-  parser.add_argument('--g_thresh',        default=0.0, type=float, help='grad suppress thresh, typically 1e-5 ~ 1e-3')
+  parser.add_argument('--g_func_w', default=2.0, type=float, help='for g_func=tanh/linear. only, typically 1e0 (more flat like tanh) ~ 1e3 (more steep like sign)')
+  parser.add_argument('--g_thresh', default=0.0, type=float, help='grad suppress thresh, typically 1e-5 ~ 1e-3')
   parser.add_argument('--loss_w', default=-10,   type=float, help='target outval for non-targeted and targeted-bg, for any loss_fn except BCE')
   parser.add_argument('--loss_v', default=10,    type=float, help='target outval for targeted-fg, for any loss_fn except BCE')
   parser.add_argument('--steps',  default=40,    type=int)
