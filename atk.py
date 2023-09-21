@@ -221,6 +221,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
     with torch.enable_grad():
       logits, piou = fwder.forward(AX, *P)    # [B=1, H, W], [B=1]
       mask = logits > fwder.model.mask_threshold
+      masked_area = mask.sum() / mask.numel()
 
       loss_fn_step = loss_fn
       if args.loss.value in RS_LOSS_DICT:
@@ -241,6 +242,9 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
 
     # NOTE: stop early :)
     # if loss.abs() < 1e-5: break
+    if not is_tgt and masked_area <= 0: break
+    # NOTE: do not know why but work around
+    if torch.isnan(loss.sum()): break
 
     g = grad(loss, AX, loss)[0]
     # supress small value
@@ -261,7 +265,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
       dxs  .append(DX)
       preds.append(np.tile(decode_msk(mask), reps=(1, 1, 3)))
 
-    if log: print(f'>> loss: {loss.sum().item():.5f}, piou: {piou.item():.5f}, masked_area: {mask.sum() / mask.numel():.3%}')
+    if log: print(f'>> loss: {loss.sum().item():.5f}, piou: {piou.item():.5f}, masked_area: {masked_area:.3%}')
 
   fwder.model.zero_grad()
   gc_everything()
