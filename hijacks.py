@@ -196,7 +196,7 @@ def js_div_fn(p, q, softmax_output=False, reduction='none', red_dim=None, ignore
     q = mask_background * q  # Change labels -1 to 0 for one-hot.
     q = F.one_hot(q.view(q.shape[0], -1), p.shape[1])
     q = q.permute(0, 2, 1).view(p.shape).float()
-    m = (p + q) / 2
+    m = (p + q) / 2 + 1e-9      # NOTE: avoid div_zero
     
     loss = (F.kl_div(m.log(), p, reduction=reduction) + F.kl_div(m.log(), q, reduction=reduction)) / 2
     loss = mask_background.unsqueeze(1) * loss  # Ignore contribution of background.
