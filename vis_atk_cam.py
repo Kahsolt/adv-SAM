@@ -85,7 +85,7 @@ def run(args):
   mask, piou = make_pred(ptor_pack, img)
 
   # attack
-  adv, mask_adv, piou_adv = pgd(args, fwd_pack, img, tgt=tgt)
+  adv, mask_adv, piou_adv, _ = pgd(args, fwd_pack, img, tgt=tgt)
   # cam AX
   cam_adv = make_cam(args, fwd_pack, adv, tgt, use_cpu=True)
   # pred AX

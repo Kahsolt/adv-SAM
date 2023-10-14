@@ -236,7 +236,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool
 
     if 'stop early':
       delta_abs_max = max(delta.max(), -delta.min())
-      print('delta_abs_max:', delta_abs_max)
+      #print('delta_abs_max:', delta_abs_max)
       if delta_abs_max < 1 / 255: break
 
     AX = denorm(AX) - delta
@@ -249,7 +249,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool
       dxs  .append(DX)
       preds.append(np.tile(decode_msk(mask), reps=(1, 1, 3)))
 
-    if log: print(f'>> loss: {loss.sum().item():.5f}, piou: {piou.item():.5f}, masked_area: {masked_area:.3%}')
+    if log: print(f'>> grad: {g.abs().mean().item():.5f}, loss: {loss.sum().item():.5f}, piou: {piou.item():.5f}, masked_area: {masked_area:.3%}')
 
   fwder.model.zero_grad()
   gc_everything()
