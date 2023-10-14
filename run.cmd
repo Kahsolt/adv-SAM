@@ -13,12 +13,9 @@ python atk.py --point 400,600
 
 REM 对比 干净样本 和 对抗样本 的 CAM 图
 REM 无目标:狗
-python atk_vis.py --point 400,200 --cam_meth GradCAM
+python vis_atk_cam.py --point 400,200 --cam_meth GradCAM
 REM 有目标: 狗 → 盆子
-python atk_vis.py --point 400,200 --point_tgt 250,550 --cam_meth GradCAM
-
-REM 查看一张图的所有 lim 图
-python vis_lim.py --point 400,200
+python vis_atk_cam.py --point 400,200 --point_tgt 250,550 --cam_meth GradCAM
 
 
 REM 通用攻击配置参数
@@ -37,35 +34,9 @@ python atk.py --point 400,200 --loss_w -4
 REM 只有 BCE 不需要 --loss_w, 其他都需要
 python atk.py --point 400,200 --loss BCE
 
-REM 无目标攻击 + 限制修改区域
-REM 1. 仅修改 边缘
-python atk.py --point 400,200 --lim edge --edge_w 0.1
-REM 2. 仅修改 Saliency Map 区域
-python atk.py --point 400,200 --lim smap --smap_w 0.5
-REM 3. 仅修改 CAM 区域
-python atk.py --point 400,200 --lim cam --cam_w 0.1 --cam_meth GradCAM
-REM 4. 仅修改 lim点原始预测 区域 (脚)
-python atk.py --point 400,200 --lim 400,600
-REM 5. 仅修改 lim点原始预测 以外的区域 (非狗)
-python atk.py --point 400,200 --lim ~400,200
-
-
 REM 有目标攻击：e.g. 指针指向 狗 → 预测出 盆子
 REM 命令行比无目标攻击多一个 --point_tgt 必选选项
 python atk.py --point 400,200 --point_tgt 250,550
-
-REM 有目标攻击 + 限制修改区域
-REM 1. 仅修改 边缘
-python atk.py --point 400,200 --point_tgt 250,550 --lim edge --edge_w 0.1
-REM 2. 仅修改 Saliency Map 区域
-python atk.py --point 400,200 --point_tgt 250,550 --lim smap --smap_w 0.5
-REM 3. 仅修改 CAM 区域
-python atk.py --point 400,200 --point_tgt 250,550 --lim cam --cam_w 0.1 --cam_meth GradCAM
-REM 4. 仅修改 lim点原始预测 区域 (脚)
-python atk.py --point 400,200 --point_tgt 250,550 --lim 400,600
-REM 5. 仅修改 lim点原始预测 以外的区域 (非狗)
-python atk.py --point 400,200 --point_tgt 250,550 --lim ~400,200
-
 
 REM 跨图像攻击
 python atk.py --point 400,200 --point_tgt 250,550 --f_tgt repo\segment-anything\notebooks\images\groceries.jpg
@@ -78,14 +49,8 @@ python atk_sam.py -L 10
 python atk_sam.py -L 10 --multi_mask
 REM e.g. 无目标攻击
 python atk_sam.py --atk
-REM e.g. 无目标攻击，限制修改到 边缘
-python atk_sam.py --atk --lim edge
 REM e.g. 有目标攻击 (随机目标)
 python atk_sam.py --atk --tgt
-REM e.g. 有目标攻击 (随机目标) 限制修改到 该随机目标
-python atk_sam.py --atk --tgt --lim tgt
-REM e.g. 有目标攻击 (随机目标) 限制修改到 非该随机目标
-python atk_sam.py --atk --tgt --lim ~tgt
 
 
 REM 跑整个 KITTI 数据集
@@ -95,11 +60,5 @@ python atk_kitti.py -L 10
 python atk_kitti.py -L 10 --multi_mask
 REM e.g. 无目标攻击
 python atk_kitti.py --atk
-REM e.g. 无目标攻击，限制修改到 边缘
-python atk_kitti.py --atk --lim edge
 REM e.g. 有目标攻击 (随机目标)
 python atk_kitti.py --atk --tgt
-REM e.g. 有目标攻击 (随机目标) 限制修改到 该随机目标
-python atk_kitti.py --atk --tgt --lim tgt
-REM e.g. 有目标攻击 (随机目标) 限制修改到 非该随机目标
-python atk_kitti.py --atk --tgt --lim ~tgt

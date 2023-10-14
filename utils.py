@@ -160,11 +160,6 @@ def show_anns(anns:Dict[str, Any]):
   ax.set_autoscale_on(False)
   ax.imshow(img)
 
-def get_edge(im:npimg_u8) -> npimg_f32:
-  assert is_npimg_u8(im), 'expect npimg of np.uint8'
-  img = Image.fromarray(im).convert('RGB').filter(ImageFilter.FIND_EDGES).convert('L')
-  return np.asarray(img, dtype=np.float32) / 255.
-
 def make_diff(img:npimg_u8, adv:npimg_u8) -> npimg_f32:
   im0 = img / 255.0
   im1 = adv / 255.0

@@ -60,9 +60,7 @@ def run(args):
           else:
             tgt = None
         
-          lim = make_lim(args, img, tgt, ptor_pack, fwd_pack)
-
-          _, mask_hat, piou_hat, steps = pgd(args, fwd_pack, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
+          _, mask_hat, piou_hat, steps = pgd(args, fwd_pack, img, tgt, multi_mask=args.multi_mask, log=args.debug)
           step_sum += steps
         else:
           mask_hat, piou_hat = make_pred(ptor_pack, img, multi_mask=args.multi_mask)

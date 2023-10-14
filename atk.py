@@ -57,8 +57,6 @@ class AtkFunc(Enum):
 ATK_METH = [x.value for x in AtkMeth]
 ATK_LOSS = [x.value for x in AtkLoss]
 ATK_FUNC = [x.value for x in AtkFunc]
-CAM_METH = ['GradCAM', 'HiResCAM', 'ScoreCAM', 'GradCAMPlusPlus', 'AblationCAM', 'XGradCAM', 'EigenCAM', 'FullGrad']
-LIM      = ['', 'edge', 'smap', 'cam', 'tgt']   # or a point coord, use prefix '~' to negate
 SAM_MASK_THRESH = 0.0
 
 class SamForwarder(nn.Module):
@@ -160,16 +158,15 @@ def make_loss_fn(args):
   return loss_fns[args.loss]
 
 FwdPack = Tuple[SamForwarder, Prompts, Callable]    # loss_fn
-PtorPack = Tuple[SamPredictor, Prompts]    # loss_fn
+PtorPack = Tuple[SamPredictor, Prompts]
 
 
 @torch.no_grad()
-def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=None, 
-        multi_mask:bool=False, log:bool=True) -> Union[Tuple[npimg_u8, npimg_b1, float, int], Tuple[npimg_u8, List[npimg_b1], List[float], int]]:
+def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool=False, log:bool=True) \
+    -> Union[Tuple[npimg_u8, npimg_b1, float, int], Tuple[npimg_u8, List[npimg_b1], List[float], int]]:
 
   fwder, prompts, loss_fn = fwd_pack
   is_tgt = tgt is not None
-  is_lim = lim is not None
 
   b1_to_u8   = lambda x: np.tile((np.expand_dims(x, -1) * 255).astype(np.uint8), reps=(1, 1, 3))
   norm       = lambda x: fwder.norm_image  (x  * 255)    # [0, 1] to normed
@@ -182,7 +179,6 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
   # NOTE: must call `transform_image(img)` first to set up `self.original_size`, before other `transform_*`
   X = fwder.transform_image(img)          # [B, C=3, pH, pW], var-mean normed image, vrng ~[-2.4, 2.4]
   Xo = (denorm(X) * 255).byte().div(255)  # [B, C=3, pH, pW], vrng ~[0.0, 1.0]
-  M = fwder.transform_image(b1_to_u8(lim), is_edge=True).bool() if is_lim else 1.0  # [B, C=3, pH, pW]
   P = fwder.transform_prompts(*prompts)
 
   # make target tensor
@@ -193,7 +189,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
       Y = Y_bin.float()
     else:
       Y = (Y_bin * args.loss_v + ~Y_bin * args.loss_w).float()
-  else:                 # non-tagerted, generate target logits
+  else:        # non-tagerted, generate target logits
     H, W, _ = img.shape
     if args.loss == AtkLoss.BCE:  # non-tagert for BCE is all zeros
       Y = torch.zeros([H, W]).to(X.device, torch.float32)
@@ -207,7 +203,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
 
   # random start
   if args.meth != AtkMeth.FGSM:
-    noise = torch.empty_like(X).uniform_(-args.eps, args.eps) * M
+    noise = torch.empty_like(X).uniform_(-args.eps, args.eps)
     AX = norm((Xo + noise).clamp(0.0, 1.0))
   else:
     AX = X.clone()
@@ -248,15 +244,12 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
     if torch.isnan(loss.sum()): break
 
     g = grad(loss, AX, loss)[0]
-    # supress small value
-    if args.g_thresh > 0.0:
-      g *= torch.abs(g) > args.g_thresh
     # make projection
     if   args.g_func == AtkFunc.SIGN:   fg = g.sign()
     elif args.g_func == AtkFunc.TANH:   fg = torch.tanh (g * args.g_func_w)
     elif args.g_func == AtkFunc.LINEAR: fg = torch.clamp(g * args.g_func_w, min=-1, max=1)
     # make masked step
-    delta: Tensor = fg * M * args.alpha
+    delta: Tensor = fg * args.alpha
 
     if 'stop early':
       delta_abs_max = max(delta.max(), -delta.min())
@@ -382,113 +375,6 @@ def make_pseudo_multi_class_logits(logits:Tensor, is_tgt:bool=False) -> Tensor:
   plogits[:, n, :, :] = plogits[:, n, :, :] * (plogits[:, n, :, :] < SAM_MASK_THRESH) * -1
   return plogits
 
-@torch.no_grad()
-def _make_smap(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1) -> npimg_f32:
-  decode = lambda x: fwder.unresize_image(x)[0].permute(1, 2, 0).cpu().numpy()
-
-  fwder, prompts, loss_fn = fwd_pack
-  X = fwder.transform_image(img)
-  P = fwder.transform_prompts(*prompts)
-  Y = make_Y(tgt, img, args.loss_w).to(X.device)
-
-  with torch.enable_grad():
-    X.requires_grad = True
-    logits, piou = fwder.forward(X, *P)
-    loss = loss_fn(logits, Y)
-
-  g = grad(loss, X, loss)[0]
-  psmap = F.tanh(g.abs())
-  psmap /= psmap.max()
-  smap: npimg_f32 = decode(psmap)   # [H, W, C=3]
-  smap = smap.mean(axis=-1)         # [H, W]
-  return smap
-
-@torch.no_grad()
-def _make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1, use_cpu:bool=True) -> npimg_f32:
-  from pytorch_grad_cam.base_cam import BaseCAM
-  from pytorch_grad_cam.activations_and_gradients import ActivationsAndGradients
-  from pytorch_grad_cam import GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM, EigenCAM, FullGrad
-  from pytorch_grad_cam.utils.image import show_cam_on_image
-
-  class SAMTarget:
-    def __init__(self, mask:Tensor, loss_fn:Callable):
-      self.mask = mask    # [H, W]
-      self.loss_fn = loss_fn
-    def __call__(self, logits:Tensor):
-      return self.loss_fn(logits, self.mask)
-  
-  fwder, prompts, loss_fn = fwd_pack
-  decode = lambda x: fwder.unresize_image(x)[0].permute(1, 2, 0).cpu().numpy()
-
-  X = fwder.transform_image(img)
-  if use_cpu: X = X.cpu()
-  P = fwder.transform_prompts(*prompts)
-  if use_cpu: P = [p.cpu() if isinstance(p, Tensor) else p for p in P]
-  Y = make_Y(tgt, img, args.loss_w).to(X.device)   # [B=1, H, W]
-  if use_cpu: fwder = fwder.cpu()
-  L = [fwder.model.mask_decoder.output_upscaling]
-  T = [SAMTarget(Y[0], loss_fn)]
-
-  # hijack .forward() bind args
-  fwder.forward_orignal = fwder.forward
-  fwder.forward = lambda x: fwder.forward_orignal(x, *P)[0]
-
-  cam_inst: BaseCAM = locals()[args.cam_meth](fwder, L)
-  #cam_inst.forward = lambda *args, **kwargs: BaseCAM_forward_hijack(cam_inst, *args, **kwargs)
-  with torch.enable_grad():
-    cam = cam_inst(input_tensor=X, targets=T, eigen_smooth=False)
-
-  # unhijack .forward()
-  fwder.forward = fwder.forward_orignal
-
-  del X, P, Y, L, T
-  a_g: ActivationsAndGradients = cam_inst.activations_and_grads
-  a_g.activations.clear()
-  a_g.gradients  .clear()
-  a_g.handles    .clear()
-  del cam_inst, a_g
-
-  if use_cpu: fwder = fwder.to(device)
-
-  cam_t = torch.from_numpy(cam).unsqueeze_(1)
-  cam: npimg_f32 = decode(cam_t)  # [H, W, C=3]
-  cam = cam.mean(axis=-1)         # [H, W]
-  return cam
-
-def make_lim(args, img:npimg_u8, tgt:npimg_b1, ptor_pack:PtorPack=None, fwd_pack:FwdPack=None) -> npimg_b1:
-  if not args.lim: return None
-
-  lim_s: str = args.lim
-  inv = False
-  if lim_s.startswith('~'):
-    lim_s = lim_s[1:]
-    inv = True
-
-  if   lim_s == 'edge': lim =  get_edge (                img     ) > args.edge_w
-  elif lim_s == 'smap': lim = _make_smap(args, fwd_pack, img, tgt) > args.smap_w
-  elif lim_s == 'cam':  lim = _make_cam (args, fwd_pack, img, tgt) > args.cam_w
-  elif lim_s == 'tgt':  lim = tgt
-  else:   # it should be a point coord
-    ptor, _ = ptor_pack
-    prompts = make_prompts(lim_s, img.shape[:-1])
-    mask, _ = make_pred((ptor, prompts), img)
-    lim = mask > ptor.model.mask_threshold
-
-  if inv: lim = ~lim
-
-  if args.show:
-    #plt.clf()
-    #visual = show_cam_on_image(img, cam, use_rgb=True)
-    #plt.imshow(visual)
-    #plt.show()
-    
-    plt.clf()
-    plt.subplot(121) ; plt.title('img') ; plt.imshow(img)
-    plt.subplot(122) ; plt.title('lim') ; plt.imshow(lim)
-    plt.show()
-
-  return lim
-
 
 @timer
 def run(args):
@@ -509,14 +395,11 @@ def run(args):
   assert img.shape == img_tgt.shape, f'>> image shape of src and tgt mismatch: {img.shape} != {img_tgt.shape}, current not supported :('
   tgt = make_tgt(ptor, img_tgt, args.point_tgt)
   is_tgt = tgt is not None
-  # make lim
-  lim = make_lim(args, img, tgt, ptor_pack, fwd_pack)
-  is_lim = lim is not None
 
   # pred X
   mask, piou = make_pred(ptor_pack, img)
   # attack
-  adv, mask_adv, piou_adv, _ = pgd(args, fwd_pack, img, tgt=tgt, lim=lim)
+  adv, mask_adv, piou_adv, _ = pgd(args, fwd_pack, img, tgt=tgt)
   # delta
   diff = make_diff(img, adv)
   # pred AX
@@ -529,9 +412,8 @@ def run(args):
     plt.clf()
     plt.subplot(231) ; plt.imshow(img)            ; plt.title('img')
     plt.subplot(232) ; plt.imshow(mask, cmap)     ; plt.title(f'mask (piou={piou:.5f})')
-    plt.subplot(233)
-    if   is_lim:       plt.imshow(lim, cmap)      ; plt.title(f'lim: {args.lim}')
-    elif is_tgt:       plt.imshow(tgt, cmap)      ; plt.title('tgt')
+    if is_tgt: 
+      plt.subplot(233) ; plt.imshow(tgt, cmap)    ; plt.title('tgt')
     plt.subplot(234) ; plt.imshow(adv)            ; plt.title('img_adv')
     plt.subplot(235) ; plt.imshow(mask_adv, cmap) ; plt.title(f'mask_adv (piou={piou_adv:.5f})')
     plt.subplot(236) ; plt.imshow(diff, cmap)     ; plt.title('diff (proc)')
@@ -555,24 +437,16 @@ def get_parser() -> ArgumentParser:
   parser.add_argument('--loss',   default='MSE',  choices=ATK_LOSS, help='attack creterion')
   parser.add_argument('--g_func', default='sign', choices=ATK_FUNC, help='grad project func')
   parser.add_argument('--g_func_w', default=2.0, type=float, help='for g_func=tanh/linear. only, typically 1e0 (more flat like tanh) ~ 1e3 (more steep like sign)')
-  parser.add_argument('--g_thresh', default=0.0, type=float, help='grad suppress thresh, typically 1e-5 ~ 1e-3')
   parser.add_argument('--loss_w', default=-10,   type=float, help='target outval for non-targeted and targeted-bg, for any loss_fn except BCE')
   parser.add_argument('--loss_v', default=10,    type=float, help='target outval for targeted-fg, for any loss_fn except BCE')
   parser.add_argument('--steps',  default=40,    type=int)
   parser.add_argument('--eps',    default=8/255, type=float)
   parser.add_argument('--alpha',  default=1/255, type=float)
-  # limit modifiable area
-  parser.add_argument('--lim',      default='',    type=str,   help=f'limit PGD to edge/smap/cam area, choose value from {LIM}; or predicted mask area, set to a point coord')
-  parser.add_argument('--edge_w',   default=0.1,   type=float, help='sobel edge threshold')
-  parser.add_argument('--smap_w',   default=0.5,   type=float, help='saliency map threshold')
-  parser.add_argument('--cam_w',    default=0.1,   type=float, help='clf attn map threshold')
-  parser.add_argument('--cam_meth', default='GradCAM', choices=CAM_METH, help='cam method')
   # misc
   parser.add_argument('--fps',   default=2,      type=int, help='export video FPS, set -1 to disable')
   parser.add_argument('--seed',  default=114514, type=int, help='rand seed')
   parser.add_argument('--nolog', action='store_true', help='do not save logs')
   parser.add_argument('--debug', action='store_true', help='show detailed pgd log by step')
-  parser.add_argument('--show',  action='store_true', help='show generated --lim')
   return parser
 
 def get_args(parser:ArgumentParser) -> Namespace:
