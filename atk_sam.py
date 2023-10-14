@@ -29,6 +29,7 @@ def run(args):
   s = time()
 
   iou_sum, iou_cnt = 0.0, 0
+  step_sum = 0
   interrupted = False
   try:
     for id in tqdm(sample_ids):
@@ -61,7 +62,8 @@ def run(args):
         
           lim = make_lim(args, img, tgt, ptor_pack, fwd_pack)
 
-          _, mask_hat, piou_hat = pgd(args, fwd_pack, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
+          _, mask_hat, piou_hat, steps = pgd(args, fwd_pack, img, tgt, lim, multi_mask=args.multi_mask, log=args.debug)
+          step_sum += steps
         else:
           mask_hat, piou_hat = make_pred(ptor_pack, img, multi_mask=args.multi_mask)
 
@@ -75,11 +77,14 @@ def run(args):
     print_exc()
   finally:
     miou = 0.0 if iou_cnt == 0 else (iou_sum / iou_cnt)
+    mstep = 0.0 if iou_cnt == 0 else (step_sum / iou_cnt)
     print(f'>> miou: {miou}')
+    print(f'>> mstep: {mstep}')
 
     t = time()
     rec = {
       'miou': miou,
+      'mstep': mstep,
       'interrupted': interrupted,
       'ts': t - s,
       'ts_start': str(datetime.fromtimestamp(t)),

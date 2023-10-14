@@ -165,7 +165,7 @@ PtorPack = Tuple[SamPredictor, Prompts]    # loss_fn
 
 @torch.no_grad()
 def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=None, 
-        multi_mask:bool=False, log:bool=True) -> Union[Tuple[npimg_u8, npimg_b1, float], Tuple[npimg_u8, List[npimg_b1], List[float]]]:
+        multi_mask:bool=False, log:bool=True) -> Union[Tuple[npimg_u8, npimg_b1, float, int], Tuple[npimg_u8, List[npimg_b1], List[float], int]]:
 
   fwder, prompts, loss_fn = fwd_pack
   is_tgt = tgt is not None
@@ -215,6 +215,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
   is_gen_vid = HAS_MOVIEPY and args.fps > 0 and not args.nolog
   if is_gen_vid: dxs, preds = [], []
 
+  step_real = 0
   for i in (tqdm if log else list)(range(args.steps)):
     AX.requires_grad = True
 
@@ -255,11 +256,18 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
     elif args.g_func == AtkFunc.TANH:   fg = torch.tanh (g * args.g_func_w)
     elif args.g_func == AtkFunc.LINEAR: fg = torch.clamp(g * args.g_func_w, min=-1, max=1)
     # make masked step
-    delta = fg * M * args.alpha
+    delta: Tensor = fg * M * args.alpha
+
+    if 'stop early':
+      delta_abs_max = max(delta.max(), -delta.min())
+      print('delta_abs_max:', delta_abs_max)
+      if delta_abs_max < 1 / 255: break
 
     AX = denorm(AX) - delta
     DX: Tensor = (AX - Xo).clamp(-args.eps, args.eps)
     AX = norm((Xo + DX).clamp(0.0, 1.0))
+
+    step_real += 1
 
     if is_gen_vid:
       dxs  .append(DX)
@@ -304,14 +312,14 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, lim:npimg_b1=No
   if multi_mask:
     logits, piou = fwder.forward(AX, *P, multi_mask=multi_mask)
     mask = logits > fwder.model.mask_threshold
-    return decode_img(AX), [mask[i].cpu().numpy() for i in range(len(mask))], piou.tolist()
+    return decode_img(AX), [mask[i].cpu().numpy() for i in range(len(mask))], piou.tolist(), step_real
   else:
     if not 'loopback':
       logits, piou = fwder.forward(AX, *P, multi_mask=False)
       mask = logits > fwder.model.mask_threshold
-      return decode_img(AX), mask[0].cpu().numpy(), piou.item()
+      return decode_img(AX), mask[0].cpu().numpy(), piou.item(), step_real
     else:
-      return decode_img(AX), mask[0].cpu().numpy(), piou.item()
+      return decode_img(AX), mask[0].cpu().numpy(), piou.item(), step_real
 
 def _parse_point(coord:str, size:Size) -> Point:
   if coord:
@@ -508,7 +516,7 @@ def run(args):
   # pred X
   mask, piou = make_pred(ptor_pack, img)
   # attack
-  adv, mask_adv, piou_adv = pgd(args, fwd_pack, img, tgt=tgt, lim=lim)
+  adv, mask_adv, piou_adv, _ = pgd(args, fwd_pack, img, tgt=tgt, lim=lim)
   # delta
   diff = make_diff(img, adv)
   # pred AX
