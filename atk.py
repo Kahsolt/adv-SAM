@@ -157,7 +157,7 @@ def make_loss_fn(args):
   if args.loss not in loss_fns: raise ValueError(f'unknown loss fn: {args.loss.value}')
   return loss_fns[args.loss]
 
-FwdPack = Tuple[SamForwarder, Prompts, Callable]    # loss_fn
+FwdPack  = Tuple[SamForwarder, Prompts, Callable]    # loss_fn
 PtorPack = Tuple[SamPredictor, Prompts]
 
 
@@ -182,24 +182,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool
   P = fwder.transform_prompts(*prompts)
 
   # make target tensor
-  if is_tgt:   # tagerted, load target mask (npimg_b1)
-    Y_bin = torch.from_numpy(tgt).to(X.device)
-    Y_bin.unsqueeze_(0)   # [B, H, W]
-    if args.loss == AtkLoss.BCE:
-      Y = Y_bin.float()
-    else:
-      Y = (Y_bin * args.loss_v + ~Y_bin * args.loss_w).float()
-  else:        # non-tagerted, generate target logits
-    H, W, _ = img.shape
-    if args.loss == AtkLoss.BCE:  # non-tagert for BCE is all zeros
-      Y = torch.zeros([H, W]).to(X.device, torch.float32)
-    else:                         # otherwise is same-valued logits (as background)
-      Y = torch.ones([H, W]).to(X.device, torch.float32) * args.loss_w
-    Y.unsqueeze_(0)   # [B, H, W]
-    Y_bin = Y.bool()
-  assert Y_bin.dtype in ['bool', bool, torch.bool]
-  if args.loss.value in RS_LOSS_DICT:   # binary-clf to multi-class clf target
-    Y = Y_bin.long()
+  Y, Y_bin = make_Y(args, tgt, img, X.device)
 
   # random start
   if args.meth != AtkMeth.FGSM:
@@ -314,17 +297,17 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool
     else:
       return decode_img(AX), mask[0].cpu().numpy(), piou.item(), step_real
 
-def _parse_point(coord:str, size:Size) -> Point:
-  if coord:
-    point = list(reversed([float(e) for e in coord.split(',')]))
-    for i, e in enumerate(point):
-      if e < 1.0: point[i] = e * size[i]
-      point[i] = int(point[i])
-  else:
-    point = [random.randrange(sz) for sz in size]
-  return point
-
 def make_prompts(point:Union[str, ndarray], img_size:tuple) -> Prompts:
+  def _parse_point(coord:str, size:Size) -> Point:
+    if coord:
+      point = list(reversed([float(e) for e in coord.split(',')]))
+      for i, e in enumerate(point):
+        if e < 1.0: point[i] = e * size[i]
+        point[i] = int(point[i])
+    else:
+      point = [random.randrange(sz) for sz in size]
+    return point
+
   if isinstance(point, str) or point is None:
     point = _parse_point(point, img_size)
     print(f'>> point: {point}')
@@ -352,20 +335,26 @@ def make_tgt(ptor:SamPredictor, img:npimg_u8, point_tgt:Union[str, ndarray])-> n
   tgt, _ = make_pred((ptor, prompts_tgt), img)
   return tgt
 
-def make_Y(tgt:npimg_b1=None, img:npimg_u8=None, w:float=-10.0) -> Tensor:
-  '''
-    non-targeted: (img.shape, loss_w) -> Tensor
-    targeted: npimg_b1 -> Tensor
-  '''
-
-  if tgt is not None:   # targeted
-    # value in {0, 1}
-    Y = torch.from_numpy(tgt).float()
-  else:                 # non-targeted
-    # value in {w}, where w is a large negative
+def make_Y(args, tgt:npimg_b1=None, img:npimg_u8=None, device:str=device) -> Tuple[Tensor, Tensor]:
+  if tgt is not None:   # tagerted, load target mask (npimg_b1)
+    Y_bin = torch.from_numpy(tgt).to(X.device)
+    Y_bin.unsqueeze_(0)   # [B, H, W]
+    if args.loss == AtkLoss.BCE:
+      Y = Y_bin.float()
+    else:
+      Y = (Y_bin * args.loss_v + ~Y_bin * args.loss_w).float()
+  else:        # non-tagerted, generate target logits
     H, W, _ = img.shape
-    Y = torch.ones([H, W]) * w
-  return Y.unsqueeze_(0)    # [C=1, oH, oW]
+    if args.loss == AtkLoss.BCE:  # non-tagert for BCE is all zeros
+      Y = torch.zeros([H, W]).to(device, torch.float32)
+    else:                         # otherwise is same-valued logits (as background)
+      Y = torch.ones([H, W]).to(device, torch.float32) * args.loss_w
+    Y.unsqueeze_(0)   # [B, H, W]
+    Y_bin = Y.bool()
+  assert Y_bin.dtype in ['bool', bool, torch.bool]
+  if args.loss.value in RS_LOSS_DICT:   # binary-clf to multi-class clf target
+    Y = Y_bin.long()
+  return Y, Y_bin
 
 def make_pseudo_multi_class_logits(logits:Tensor, is_tgt:bool=False) -> Tensor:
   # [B, H, W] => [B, C=2, H, W]

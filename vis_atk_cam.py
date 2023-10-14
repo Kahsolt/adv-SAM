@@ -30,7 +30,7 @@ def make_cam(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1, use_cpu:bool=Tr
   if use_cpu: X = X.cpu()
   P = fwder.transform_prompts(*prompts)
   if use_cpu: P = [p.cpu() if isinstance(p, Tensor) else p for p in P]
-  Y = make_Y(tgt, img, args.loss_w).to(X.device)   # [B=1, H, W]
+  Y, _ = make_Y(args, tgt, img, X.device)   # [B=1, H, W]
   if use_cpu: fwder = fwder.cpu()
   L = [fwder.model.mask_decoder.output_upscaling]
   T = [SAMTarget(Y[0], loss_fn)]
