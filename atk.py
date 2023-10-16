@@ -227,6 +227,10 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool
     if torch.isnan(loss.sum()): break
 
     g = grad(loss, AX, loss)[0]
+
+    # work around for NaN in grad (JS can lead loss to exactly 0.0)
+    if torch.any(torch.isnan(g)): break
+
     # make projection
     if   args.g_func == AtkFunc.SIGN:   fg = g.sign()
     elif args.g_func == AtkFunc.TANH:   fg = torch.tanh (g * args.g_func_w)
