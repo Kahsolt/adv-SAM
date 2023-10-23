@@ -3,7 +3,6 @@
 # Create Time: 2023/07/05 
 
 import random
-from tqdm import tqdm
 from enum import Enum
 from datetime import datetime
 from pprint import pprint as pp
@@ -162,7 +161,7 @@ PtorPack = Tuple[SamPredictor, Prompts]
 
 
 @torch.no_grad()
-def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool=False, log:bool=True) \
+def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool=False, verbose:bool=False, log_dp:Path=None) \
     -> Union[Tuple[npimg_u8, npimg_b1, float, int], Tuple[npimg_u8, List[npimg_b1], List[float], int]]:
 
   fwder, prompts, loss_fn = fwd_pack
@@ -191,11 +190,11 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool
   else:
     AX = X.clone()
 
-  is_gen_vid = HAS_MOVIEPY and args.fps > 0 and not args.nolog
+  is_gen_vid = HAS_MOVIEPY and args.fps > 0 and log_dp is not None
   if is_gen_vid: dxs, preds = [], []
 
   step_real = 0
-  for i in (tqdm if log else list)(range(args.steps)):
+  for i in tqdm(range(args.steps), desc='PGD', disable=not verbose):
     AX.requires_grad = True
 
     with torch.enable_grad():
@@ -253,7 +252,8 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool
       dxs  .append(DX)
       preds.append(np.tile(decode_msk(mask), reps=(1, 1, 3)))
 
-    if log: print(f'>> grad: {g.abs().mean().item():.5f}, loss: {loss.sum().item():.5f}, piou: {piou.item():.5f}, masked_area: {masked_area:.3%}')
+    if verbose and i % 4 == 0:
+      print(f'>> grad: {g.abs().mean().item():.5f}, loss: {loss.sum().item():.5f}, piou: {piou.item():.5f}, masked_area: {masked_area:.3%}')
 
   fwder.model.zero_grad()
   gc_everything()
@@ -261,13 +261,13 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool
   if is_gen_vid:
     try:
       dxs_dec   = [decode_dx(dx) for dx in dxs]
-      dxs_rep   = [dxs_dec[0]] * args.fps + dxs_dec + [dxs_dec[-1]] * args.fps * 4
-      preds_rep = [preds  [0]] * args.fps + preds   + [preds  [-1]] * args.fps * 4
-      ImageSequenceClip(dxs_rep,   fps=args.fps).write_videofile(str(args.log_dp / 'pgd_noise.mp4'))
-      ImageSequenceClip(preds_rep, fps=args.fps).write_videofile(str(args.log_dp / 'pgd_mask.mp4'))
-      
+      dxs_rep   = [dxs_dec[0]] * args.fps + dxs_dec + [dxs_dec[-1]] * args.fps * 3
+      preds_rep = [preds  [0]] * args.fps + preds   + [preds  [-1]] * args.fps * 3
+      ImageSequenceClip(dxs_rep,   fps=args.fps).write_videofile(str(log_dp / 'noise.mp4'))
+      ImageSequenceClip(preds_rep, fps=args.fps).write_videofile(str(log_dp / 'mask.mp4'))
+
       if 'noise anneal':
-        x, y = prompts[0][0]
+        x, y = [round(e) for e in prompts[0][0]]
         R = 3
         dxs_crop: Tensor = torch.cat([dx[:, :, x-R:x+R, y-R:y+R] for dx in dxs], axis=0)
         deltas = dxs_crop.flatten(2).cpu().numpy()   # [F, C=3, NP=100]
@@ -280,11 +280,11 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool
           for p in range(NP):
             plt.plot(deltas[:, c, p])
         plt.tight_layout()
-        plt.savefig(str(args.log_dp / 'pgd_noise_annealing.png'))
+        plt.savefig(str(log_dp / 'noise_annealing.png'))
     except:
       print_exc()
-  
-  if log:
+
+  if verbose:
     d: Tensor = torch.abs(Xo - denorm(AX))
     print('Linf (raw):', d.max() .item())
     print('L1 (raw):',   d.mean().item())
@@ -368,9 +368,11 @@ def make_pseudo_multi_class_logits(logits:Tensor, is_tgt:bool=False) -> Tensor:
   plogits[:, n, :, :] = plogits[:, n, :, :] * (plogits[:, n, :, :] < SAM_MASK_THRESH) * -1
   return plogits
 
-
 @timer
 def run(args):
+  # log
+  log_dp = args.log_dp if args.log else None
+
   # model & loss
   sam = load_sam(args.M)
   ptor = SamPredictor(sam)
@@ -387,38 +389,16 @@ def run(args):
   img_tgt = load_img(args.f_tgt) if args.f_tgt else img
   assert img.shape == img_tgt.shape, f'>> image shape of src and tgt mismatch: {img.shape} != {img_tgt.shape}, current not supported :('
   tgt = make_tgt(ptor, img_tgt, args.point_tgt)
-  is_tgt = tgt is not None
 
   # pred X
   mask, piou = make_pred(ptor_pack, img)
   # attack
-  adv, mask_adv, piou_adv, _ = pgd(args, fwd_pack, img, tgt=tgt)
-  # delta
-  diff = make_diff(img, adv)
+  adv, mask_adv, piou_adv, _ = pgd(args, fwd_pack, img, tgt=tgt, multi_mask=False, verbose=True, log_dp=log_dp)
   # pred AX
   if not 'loopback to predictor':
     mask_adv, piou_adv = make_pred(ptor_pack, adv)
 
-  if 'show':
-    cmap = 'gray'
-    plt.figure(figsize=(10, 6))
-    plt.clf()
-    plt.subplot(231) ; plt.imshow(img)            ; plt.title('img')
-    plt.subplot(232) ; plt.imshow(mask, cmap)     ; plt.title(f'mask (piou={piou:.5f})')
-    if is_tgt: 
-      plt.subplot(233) ; plt.imshow(tgt, cmap)    ; plt.title('tgt')
-    plt.subplot(234) ; plt.imshow(adv)            ; plt.title('img_adv')
-    plt.subplot(235) ; plt.imshow(mask_adv, cmap) ; plt.title(f'mask_adv (piou={piou_adv:.5f})')
-    plt.subplot(236) ; plt.imshow(diff, cmap)     ; plt.title('diff (proc)')
-    plt.suptitle(f'point: {prompts[0][0]}')
-    plt.tight_layout()
-    if args.nolog:
-      plt.show()
-    else:
-      fp = args.log_dp / 'atk_sam.png'
-      plt.savefig(fp, dpi=600)
-      print(f'>> savefig to {fp}')
-    plt.close()
+  plot6(img, mask, piou, adv, mask_adv, piou_adv, prompts, tgt, log_dp / 'plot6.png')
 
 
 def get_parser() -> ArgumentParser:
@@ -438,8 +418,7 @@ def get_parser() -> ArgumentParser:
   # misc
   parser.add_argument('--fps',   default=2,      type=int, help='export video FPS, set -1 to disable')
   parser.add_argument('--seed',  default=114514, type=int, help='rand seed')
-  parser.add_argument('--nolog', action='store_true', help='do not save logs')
-  parser.add_argument('--debug', action='store_true', help='show detailed pgd log by step')
+  parser.add_argument('--log', action='store_true', help='do not save logs & plots & videos')
   return parser
 
 def get_args(parser:ArgumentParser) -> Namespace:
@@ -463,15 +442,10 @@ def get_args(parser:ArgumentParser) -> Namespace:
       print('warn: force override --alpha for FGSM method')
       args.alpha = args.eps
 
-  # force verbose for single run
-  args.debug = True
-
   return args
 
 def mk_log(args):
-  if args.nolog:
-    args.fps = -1
-  else:
+  if args.log:
     args.argv = ' '.join(sys.argv)
     args.log_dp = OUT_PATH / str(datetime.now()).replace(' ', '_').replace(':', '')
     args.log_dp.mkdir()
@@ -485,6 +459,8 @@ if __name__ == '__main__':
   parser.add_argument('--point_tgt', help='alike --point, but specify target mask point to run targeted attack; default image is -f')
   parser.add_argument('--f_tgt',     help='alike -f, but specify target image filepath, change image of --point_tgt')
   args = get_args(parser)
+
+  args.log = True
 
   if args.f_tgt: assert Path(args.f_tgt).is_file(), '--f_tgt is not a valid filepath'
   #if args.point_tgt: assert args.loss == AtkLoss.BCE, 'targeted attack only supports --loss BCE'

@@ -47,6 +47,7 @@ REM e.g. 干净预测
 python atk_sam.py
 python atk_sam.py -L 10
 python atk_sam.py -L 10 --multi_mask
+python atk_sam.py -L 10 --filter_ratio 0.03,0.05
 REM e.g. 无目标攻击
 python atk_sam.py --atk
 REM e.g. 有目标攻击 (随机目标)

@@ -2,12 +2,11 @@
 # Author: Armit
 # Create Time: 2023/08/07
 
-from atk import *
+from atk_sam import *
 
 # annot IDs ref: https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py
 
 DATA_ROOT = DATASET_PATH['kitti'] / 'training'
-HIST_FILE = OUT_PATH / 'atk_kitti.json'
 
 
 def load_annot(fp:Path) -> npimg_u16:
@@ -103,114 +102,82 @@ def mask_centroid(mask:npimg_b1) -> Point:
   return pts[dist2.argmin()].tolist()[::-1]
 
 
-@timer
-def run(args):
-  sample_ids = sorted({fp.stem for fp in (DATA_ROOT / 'image_2').iterdir()})
-  np.random.shuffle(sample_ids)
-  if args.limit_img > 0: sample_ids = sample_ids[:args.limit_img]
-  
-  sam = load_sam(args.M)
-  ptor = SamPredictor(sam)
-  fwder = SamForwarder(sam)
-  loss_fn = make_loss_fn(args)
+def sample_kitti_samples(args, sample_ids) -> List[Path]:
+  return sample_ids
 
-  hist: List = load_json(HIST_FILE, list)
-  s = time()
+def run_kitti_samples(args, sample_ids:List[Path], ptor:SamPredictor, fwder:SamForwarder, loss_fn:Callable, iou_list:List[int], piou_list:List[int], step_list:List[int]):
+  for id in tqdm(sample_ids, desc='Image'):
+    img   = load_img  (DATA_ROOT / 'image_2'  / f'{id}.png')
+    annot = load_annot(DATA_ROOT / 'instance' / f'{id}.png')
+    img, annot = image_clip(img, annot)
+    img_size = img.shape[:-1]
 
-  iou_sum, iou_cnt = 0.0, 0
-  step_sum = 0
-  interrupted = False
-  try:
-    for id in tqdm(sample_ids):
-      img   = load_img  (DATA_ROOT / 'image_2'  / f'{id}.png')
-      annot = load_annot(DATA_ROOT / 'instance' / f'{id}.png')
-      img, annot = image_clip(img, annot)
-      img_size = img.shape[:-1]
-      
-      oids = sorted(set(annot.flat))
-      oids_sel = np.random.choice(oids, size=args.limit_ant, replace=False) if 0 < args.limit_ant < len(oids) else oids
-      
-      for oid in oids_sel:
-        try:
-          if 'ground truth':
-            mask_gt: npimg_b1 = annot == oid
-            mask_gt = mask_pick_connected(mask_gt, args.area_thresh)
-          if 'input':
-            xy = mask_centroid(mask_gt)
-            point = np.asarray([xy], dtype=np.float32)
-            prompts = make_prompts(point, img_size)
+    oids = sorted(set(annot.flat))
+    oids_sel = oids
+    #oids_sel = np.random.choice(oids, size=args.limit_ant, replace=False) if 0 < args.limit_ant < len(oids) else oids
 
-          fwd_pack = fwder, prompts, loss_fn
-          ptor_pack = ptor, prompts
-          
-          if args.atk:
-            if args.tgt:
-              oid_tgt = oid
-              while oid_tgt == oid: oid_tgt = np.random.choice(oids, size=1, replace=False)[0]
-              point_tgt = np.asarray([mask_centroid(annot == oid_tgt)], dtype=np.float32)
-              tgt = make_tgt(ptor, img, point_tgt)
-            else:
-              tgt = None
-          
-            _, mask_hat, piou_hat, steps = pgd(args, fwd_pack, img, tgt, multi_mask=args.multi_mask, log=args.debug)
-            step_sum += steps
+    for i, oid in enumerate(oids_sel):
+      if args.log:
+        log_dp: Path = args.log_dp / id / str(i)
+        log_dp.mkdir(parents=True, exist_ok=True)
+      else:
+        log_dp = None
+
+      try:
+        if 'ground truth':
+          mask_gt: npimg_b1 = annot == oid
+          #mask_gt = mask_pick_connected(mask_gt, args.area_thresh)
+        if 'input':
+          xy = mask_centroid(mask_gt)
+          point = np.asarray([xy], dtype=np.float32)
+          prompts = make_prompts(point, img_size)
+
+        fwd_pack = fwder, prompts, loss_fn
+        ptor_pack = ptor, prompts
+        
+        if not args.atk or args.log:
+          mask_img, piou_img = make_pred(ptor_pack, img, multi_mask=args.multi_mask)
+          mask_hat, piou_hat = mask_img, piou_img
+
+        if args.atk:
+          if args.tgt:
+            oid_tgt = oid
+            while oid_tgt == oid: oid_tgt = np.random.choice(oids, size=1, replace=False)[0]
+            point_tgt = np.asarray([mask_centroid(annot == oid_tgt)], dtype=np.float32)
+            tgt = make_tgt(ptor, img, point_tgt)
           else:
-            mask_hat, piou_hat = make_pred(ptor_pack, img, multi_mask=args.multi_mask)
+            tgt = None
 
-          if not 'debug':
-            plt.figure(figsize=(6, 3), dpi=240)
-            plt.subplot(131) ; plt.title('img')  ; plt.axis('off') ; plt.imshow(img)
-            plt.text(*xy, s='★', color='r')
-            plt.subplot(132) ; plt.title('pred') ; plt.axis('off') ; plt.imshow(mask_hat)
-            plt.subplot(133) ; plt.title('GT')   ; plt.axis('off') ; plt.imshow(mask_gt)
-            plt.tight_layout()
-            plt.show()
+          adv, mask_adv, piou_adv, steps = pgd(args, fwd_pack, img, tgt, multi_mask=args.multi_mask, log=args.log)
+          mask_hat, piou_hat = mask_adv, piou_adv
+          step_list.append(steps)
 
-          iou_cnt += 1
-          iou_sum += get_iou_auto(mask_hat, mask_gt)
-        except:
-          print_exc()
+          if args.log:
+            plot6(img, mask_img, piou_img, adv, mask_adv, piou_adv, prompts, tgt, log_dp / 'plot6.png')
 
-  except KeyboardInterrupt:
-    print('>> interrupted!!')
-    interrupted = True
-  except:
-    print_exc()
-  finally:
-    miou = 0.0 if iou_cnt == 0 else (iou_sum / iou_cnt)
-    mstep = 0.0 if iou_cnt == 0 else (step_sum / iou_cnt)
-    print(f'>> miou: {miou}')
-    print(f'>> mstep: {mstep}')
+        if args.log:
+          plot3(xy, img, mask_hat, mask_gt, log_dp / 'plot3.png')
 
-    t = time()
-    rec = {
-      'miou': miou,
-      'mstep': mstep,
-      'interrupted': interrupted,
-      'ts': t - s,
-      'ts_start': str(datetime.fromtimestamp(t)),
-      'ts_finish': str(datetime.fromtimestamp(s)),
-      'args': vars(args),
-    }
-    hist.insert(0, rec)
-    save_json(hist, HIST_FILE)
+        iou_list.append(get_iou_auto(mask_hat, mask_gt))
+        piou_list.append(piou_hat)
+      except:
+        print_exc()
 
 
 def get_parser() -> ArgumentParser:
   from atk_sam import get_parser as get_base_parser
 
   parser = get_base_parser()
-  parser.add_argument('--area_thresh', default=0.05, type=float, help='minimal mask connected area in percentage (<= 1.0) or absolute (> 1)')
   return parser
 
 def get_args(parser:ArgumentParser) -> Namespace:
   from atk_sam import get_args as get_base_args
 
   args = get_base_args(parser)
-  args.f = None
   args.D = 'kitti'
-  args.fps = -1
-  args.debug = False
+
+  if args.log: assert not args.multi_mask, 'setting conflict, cannot set both --log and --multi_mask'
+  if args.filter_area and args.filter_ratio: 'setting conflict, cannot set both --filter_area and --filter_ratio'
   return args
 
 
@@ -218,4 +185,6 @@ if __name__ == '__main__':
   parser = get_parser()
   args = get_args(parser)
   mk_log(args)
-  run(args)
+
+  sample_ids = sorted({fp.stem for fp in (DATA_ROOT / 'image_2').iterdir()})
+  run(args, sample_ids, run_kitti_samples, sample_kitti_samples)

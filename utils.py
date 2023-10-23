@@ -8,8 +8,7 @@ import random
 from time import time
 from enum import Enum
 from pathlib import Path
-from PIL import Image, ImageFilter
-from PIL.Image import Image as PILImage
+from PIL import Image
 from argparse import ArgumentParser, Namespace
 import gc
 from typing import *
@@ -59,6 +58,7 @@ DATASET_PATH = {
 }
 OUT_PATH = BASE_PATH / 'out' ; OUT_PATH.mkdir(exist_ok=True)
 
+number    = Union[int, float]
 npimg_u8  = NDArray[np.uint8]
 npimg_u16 = NDArray[np.uint16]
 npimg_f32 = NDArray[np.float32]
@@ -69,6 +69,7 @@ Size      = Tuple[int, int]
 Point     = Tuple[int, int]
 Prompts   = Tuple[ndarray, ndarray, None, None]
 
+mean = lambda x: sum(x) / len(x) if len(x) else 0.0
 
 def seed_everything(seed:int):
   print('>> global seed:', seed)
@@ -194,6 +195,50 @@ def minmax_norm(x:Data, vmax:float=None) -> Data:
 
 def info_t(x:Data, name:str='x'):
   print(f'{name}: shape={tuple(x.shape)}, dtype={x.dtype}')
+
+
+def plot3(xy:Point, img:npimg_u8, mask_hat:npimg_b1, mask_gt:npimg_b1, fp:Path=None):
+  ''' | img | pred | truth | '''
+
+  plt.clf()
+  plt.figure(figsize=(6, 3), dpi=240)
+  plt.subplot(131) ; plt.title('img')  ; plt.axis('off') ; plt.imshow(img)
+  plt.text(*xy, s='★', color='r')
+  plt.subplot(132) ; plt.title('pred') ; plt.axis('off') ; plt.imshow(mask_hat)
+  plt.subplot(133) ; plt.title('truth')   ; plt.axis('off') ; plt.imshow(mask_gt)
+  plt.tight_layout()
+  if fp is None:
+    plt.show()
+  else:
+    plt.savefig(fp, dpi=600)
+    print(f'>> savefig to {fp}')
+  plt.close()
+
+def plot6(img:npimg_u8, mask:npimg_b1, piou:float, adv:npimg_u8, mask_adv:npimg_b1, piou_adv:float, prompts:Prompts, tgt:npimg_b1, fp:Path=None):
+  ''' | img | truth | tgt |
+      | adv | pred  | diff | '''
+
+  # delta
+  diff = make_diff(img, adv)
+
+  cmap = 'gray'
+  plt.clf()
+  plt.figure(figsize=(10, 6))
+  plt.subplot(231) ; plt.imshow(img)            ; plt.title('img')
+  plt.subplot(232) ; plt.imshow(mask, cmap)     ; plt.title(f'truth (piou={piou:.5f})')
+  if tgt is not None: 
+    plt.subplot(233) ; plt.imshow(tgt, cmap)    ; plt.title('tgt')
+  plt.subplot(234) ; plt.imshow(adv)            ; plt.title('adv')
+  plt.subplot(235) ; plt.imshow(mask_adv, cmap) ; plt.title(f'pred (piou={piou_adv:.5f})')
+  plt.subplot(236) ; plt.imshow(diff, cmap)     ; plt.title('diff (postproc)')
+  plt.suptitle(f'point: {prompts[0][0]}')
+  plt.tight_layout()
+  if fp is None:
+    plt.show()
+  else:
+    plt.savefig(fp, dpi=600)
+    print(f'>> savefig to {fp}')
+  plt.close()
 
 
 def get_iou(x:Data, y:Data) -> float:
