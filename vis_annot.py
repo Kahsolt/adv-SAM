@@ -11,15 +11,12 @@ import tkinter.ttk as ttk
 import tkinter.filedialog as tkfdlg
 from traceback import print_exc
 
-from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from atk_sam import *
 from atk_sam import DATA_ROOT as SAM_DATA_ROOT
-#from atk_kitti import *
-#from atk_kitti import DATA_ROOT as KITTI_DATA_ROOT
 
 __version__ = '0.1'
 
@@ -35,8 +32,7 @@ RESOLUTION: Dict[str, number] = {
 
 class App:
 
-  def __init__(self, args):
-    self.args = args
+  def __init__(self):
     self.p = psutil.Process(os.getpid())
 
     self.cur_kind: str = None     # cur kind
@@ -311,10 +307,4 @@ class App:
 
 
 if __name__ == '__main__':
-  parser = ArgumentParser()
-  parser.add_argument('-D', default='sam', choices=['sam', 'kitti'], help='dataset')
-  args = parser.parse_args()
-
-  assert args.D == 'sam', 'only support the "sam" dataset so far'
-
-  App(args)
+  App()

@@ -4,8 +4,6 @@
 
 from atk_sam import *
 from atk_sam import DATA_ROOT as SAM_DATA_ROOT
-from atk_kitti import *
-from atk_kitti import DATA_ROOT as KITTI_DATA_ROOT
 from utils import *
 
 from tqdm import tqdm
@@ -26,23 +24,6 @@ def make_sam(args):
     for annot in cfg['annotations']:
       area .append(annot['area'])
       ratio.append(annot['area'] / total_area)
-
-  save_stats(args, len(sample_ids), area, ratio)
-
-def make_kitti(args):
-  sample_ids = sorted({fp.stem for fp in (KITTI_DATA_ROOT / 'image_2').iterdir()})
-
-  area: List[int] = []
-  ratio: List[float] = []
-  for id in tqdm(sample_ids):
-    annot = load_annot(KITTI_DATA_ROOT / 'instance' / f'{id}.png')
-    H, W = annot.shape
-    total_area = H * W
-
-    for oid in sorted(set(annot.flat)):
-      x: int = (annot == oid).sum()
-      area.append(x)
-      ratio.append(x / total_area)
 
   save_stats(args, len(sample_ids), area, ratio)
 
@@ -129,7 +110,7 @@ def query(args):
 
 if __name__ == '__main__':
   parser = ArgumentParser()
-  parser.add_argument('-D', default='sam', choices=['sam', 'kitti'], help='dataset')
+  parser.add_argument('-D', default='sam', choices=['sam'], help='dataset')
   parser.add_argument('--make', action='store_true')
   parser.add_argument('-Q', '--query', action='store_true')
   args = parser.parse_args()

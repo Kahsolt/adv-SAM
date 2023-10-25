@@ -54,7 +54,6 @@ BASE_PATH = Path(__file__).parent.absolute()
 DATA_PATH = BASE_PATH / 'data'
 DATASET_PATH = {
   'sam':   DATA_PATH / 'SAM_data',
-  'kitti': DATA_PATH / 'kitti' / 'datasets_kitti2015',
 }
 OUT_PATH = BASE_PATH / 'out' ; OUT_PATH.mkdir(exist_ok=True)
 

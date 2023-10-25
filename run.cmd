@@ -52,14 +52,3 @@ REM e.g. 无目标攻击
 python atk_sam.py --atk
 REM e.g. 有目标攻击 (随机目标)
 python atk_sam.py --atk --tgt
-
-
-REM 跑整个 KITTI 数据集
-REM e.g. 干净预测
-python atk_kitti.py
-python atk_kitti.py -L 10
-python atk_kitti.py -L 10 --multi_mask
-REM e.g. 无目标攻击
-python atk_kitti.py --atk
-REM e.g. 有目标攻击 (随机目标)
-python atk_kitti.py --atk --tgt
