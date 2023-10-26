@@ -192,7 +192,7 @@ def run_sam_samples(args, sample_ids:List[Path], ptor:SamPredictor, fwder:SamFor
         plot3(annot['point_coords'][0], img, mask_hat, mask_gt, log_dp / 'plot3.png')
 
       iou_list.append(get_iou_auto(mask_hat, mask_gt))
-      piou_list.append(piou_hat)
+      piou_list.append(max(piou_hat) if isinstance(piou_hat, list) else piou_hat)
 
       annots_processed += 1
       if args.limit_ant > 0 and annots_processed >= args.limit_ant:
