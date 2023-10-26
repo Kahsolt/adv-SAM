@@ -9,6 +9,7 @@ from time import time
 from enum import Enum
 from pathlib import Path
 from PIL import Image
+from PIL.Image import Image as PILImage
 from argparse import ArgumentParser, Namespace
 import gc
 from typing import *
