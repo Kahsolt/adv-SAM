@@ -8,7 +8,6 @@ from traceback import print_exc
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-
 number = Union[int, float]
 
 
@@ -72,10 +71,40 @@ def save_stats(args, area_dict:Dict[int, List[int]], total_area_dict:Dict[int, i
   plt.subplot(122) ; plt.hist(ratio_log, bins=50) ; plt.title('log(area_ratio)')
   plt.savefig(OUT_PATH / f'stat_{args.D}.png', dpi=600)
 
+def make_sam_hist(args):
+  data = load_json(OUT_PATH / f'stat_{args.D}.json')
+  n_masks = data['n_masks']
+  area_dict = data['area']
+  total_area_dict = data['total_area']
+
+  ratio_list = []
+  for k, v in area_dict.items():
+    ratio_list.extend(np.asarray(v) / total_area_dict[k])
+  ratio: ndarray = np.asarray(ratio_list, dtype=np.float32)
+
+  for bin in [100, 1000, 10000, 100000]:
+    delta = 1 / bin
+    with open(OUT_PATH / f'stat_{args.D}_hist_bin={bin}.txt', 'w', encoding='utf-8') as fh:
+      for i in range(bin):
+        x = delta * i
+        y = delta * (i + 1)
+        mask = (x <= ratio) & (ratio < y)
+        cnt = mask.sum()
+        if bin == 100:
+          fh.write(f'{x:.02f} ~ {y:.02f}: {cnt} ({cnt / n_masks:.5%})\n')
+        elif bin == 1000:
+          fh.write(f'{x:.03f} ~ {y:.03f}: {cnt} ({cnt / n_masks:.5%})\n')
+        elif bin == 10000:
+          fh.write(f'{x:.04f} ~ {y:.04f}: {cnt} ({cnt / n_masks:.5%})\n')
+        elif bin == 100000:
+          fh.write(f'{x:.05f} ~ {y:.05f}: {cnt} ({cnt / n_masks:.5%})\n')
+
 
 def query(args):
   fp = OUT_PATH / f'stat_{args.D}.json'
   if not fp.exists(): globals()[f'make_{args.D}'](args)
+  fp_hist = OUT_PATH / f'stat_{args.D}_hist_bin=100.txt'
+  if not fp_hist.exists(): globals()[f'make_{args.D}_hist'](args)
 
   data = load_json(fp)
   area_dict: Dict[int, List[int]] = data['area']
