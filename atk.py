@@ -35,6 +35,8 @@ class AtkLoss(Enum):
   ClipMAE = 'ClipMAE'
   ClipMSE = 'ClipMSE'
   BCE     = 'BCE'
+  DICE    = 'DICE'
+  FOCAL   = 'FOCAL'
   # provided by `nmndeep/robust-segmentation`, these loss are all for multi-class classification
   JS       = 'JS'
   COSPGD   = 'COSPGD'
@@ -142,6 +144,28 @@ class SamForwarder(nn.Module):
 
     return masks[0], iou_predictions[0]
 
+# https://www.aiuai.cn/aifarm1159.html
+def dice_loss(logits:Tensor, target:Tensor, smooth:float=1.0) -> Tensor:
+  pred = F.sigmoid(logits)    # [B, H, W]
+  intersect = (pred * target).sum(dim=[1, 2])
+  dice = (2 * intersect + smooth) / (pred.sum(dim=[1, 2]) + target.sum(dim=[1, 2]) + smooth)
+  return 1 - dice.mean()
+
+# https://cloud.tencent.com/developer/article/1669261
+class FocalLoss(nn.Module):
+
+  def __init__(self, alpha=0.25, gamma=2):
+    super().__init__()
+    self.alpha = torch.tensor([alpha, 1 - alpha], device=device)
+    self.gamma = gamma
+
+  def forward(self, preds:Tensor, labels:Tensor) -> Tensor:
+    BCE_loss = F.binary_cross_entropy_with_logits(preds, labels, reduction='none')
+    at = self.alpha.gather(0, labels.long().data.view(-1)).reshape(preds.shape)
+    pt = torch.exp(-BCE_loss)
+    F_loss = at * (1 - pt) ** self.gamma * BCE_loss
+    return F_loss.mean()
+
 def make_loss_fn(args):
   # losses from nmndeep/robust-segmentation
   if args.loss.value in RS_LOSS_DICT: return RS_LOSS_DICT[args.loss.value]
@@ -152,6 +176,8 @@ def make_loss_fn(args):
     AtkLoss.ClipMAE: lambda o, y: F.l1_loss (torch.clamp_min(o, args.loss_w), y),
     AtkLoss.ClipMSE: lambda o, y: F.mse_loss(torch.clamp_min(o, args.loss_w), y),
     AtkLoss.BCE:     F.binary_cross_entropy_with_logits,
+    AtkLoss.DICE:    dice_loss,
+    AtkLoss.FOCAL:   FocalLoss(),
   }
   if args.loss not in loss_fns: raise ValueError(f'unknown loss fn: {args.loss.value}')
   return loss_fns[args.loss]
@@ -210,7 +236,7 @@ def pgd(args, fwd_pack:FwdPack, img:npimg_u8, tgt:npimg_b1=None, multi_mask:bool
 
       if args.meth == AtkMeth.SegPGD:
         lmbd = i / (args.steps * 2)
-        attacked = mask[0] == Y_bin
+        attacked = (mask[0] == Y_bin).detach()
         loss_t = loss_fn_step( attacked * logits, Y) *      lmbd
         loss_f = loss_fn_step(~attacked * logits, Y) * (1 - lmbd)
         loss = loss_t + loss_f
@@ -341,7 +367,7 @@ def make_tgt(ptor:SamPredictor, img:npimg_u8, point_tgt:Union[str, ndarray])-> n
 
 def make_Y(args, tgt:npimg_b1=None, img:npimg_u8=None, device:str=device) -> Tuple[Tensor, Tensor]:
   if tgt is not None:   # tagerted, load target mask (npimg_b1)
-    Y_bin = torch.from_numpy(tgt).to(X.device)
+    Y_bin = torch.from_numpy(tgt).to(device)
     Y_bin.unsqueeze_(0)   # [B, H, W]
     if args.loss == AtkLoss.BCE:
       Y = Y_bin.float()
@@ -349,7 +375,7 @@ def make_Y(args, tgt:npimg_b1=None, img:npimg_u8=None, device:str=device) -> Tup
       Y = (Y_bin * args.loss_v + ~Y_bin * args.loss_w).float()
   else:        # non-tagerted, generate target logits
     H, W, _ = img.shape
-    if args.loss == AtkLoss.BCE:  # non-tagert for BCE is all zeros
+    if args.loss in [AtkLoss.BCE, AtkLoss.FOCAL]:  # non-tagert for BCE is all zeros
       Y = torch.zeros([H, W]).to(device, torch.float32)
     else:                         # otherwise is same-valued logits (as background)
       Y = torch.ones([H, W]).to(device, torch.float32) * args.loss_w

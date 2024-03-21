@@ -77,11 +77,12 @@ def seed_everything(seed:int):
   os.environ['PYTHONHASHSEED'] = str(seed)
   np.random.seed(seed)
   torch.manual_seed(seed)
-  torch.cuda.manual_seed(seed)
-  torch.cuda.manual_seed_all(seed)
-  torch.backends.cudnn.enabled = False
-  torch.backends.cudnn.benchmark = False
-  torch.backends.cudnn.deterministic = False
+  if torch.cuda.is_available():
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.enabled = False
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = False
 
 def timer(fn):
   def wrapper(*args, **kwargs):
@@ -95,8 +96,9 @@ def timer(fn):
 def gc_everything():
   for _ in range(2):
     gc.collect()
-    torch.cuda.ipc_collect()
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available():
+      torch.cuda.ipc_collect()
+      torch.cuda.empty_cache()
 
 def get_all_tensors() -> List[Tensor]:
   tensors = []
