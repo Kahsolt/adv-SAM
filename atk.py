@@ -6,6 +6,7 @@ import random
 from enum import Enum
 from datetime import datetime
 from pprint import pprint as pp
+from inspect import signature
 from traceback import print_exc
 
 import torch
@@ -21,8 +22,6 @@ except ImportError:
 
 from utils import *
 from hijacks import *
-from segment_anything.modeling import Sam
-from segment_anything.utils.transforms import ResizeLongestSide
 
 class AtkMeth(Enum):
   FGSM   = 'FGSM'
@@ -132,13 +131,19 @@ class SamForwarder(nn.Module):
     points = (point_coords, point_labels) if point_coords is not None else None
     sparse_embeddings, dense_embeddings = self.model.prompt_encoder(points, boxes, mask_input)
     # Predict masks
-    low_res_masks, iou_predictions = self.model.mask_decoder(
-      image_embeddings=self.features,
-      image_pe=self.model.prompt_encoder.get_dense_pe(),
-      sparse_prompt_embeddings=sparse_embeddings,
-      dense_prompt_embeddings=dense_embeddings,
-      multimask_output=multi_mask,
-    )
+    mask_decoder_kwargs = {
+      'image_embeddings': self.features,
+      'image_pe': self.model.prompt_encoder.get_dense_pe(),
+      'sparse_prompt_embeddings': sparse_embeddings,
+      'dense_prompt_embeddings': dense_embeddings,
+      'multimask_output': multi_mask,
+    }
+    if IS_BACKEND_TINY_SAM:
+      del mask_decoder_kwargs['multimask_output']
+    low_res_masks, iou_predictions = self.model.mask_decoder(**mask_decoder_kwargs)
+    if IS_BACKEND_TINY_SAM:
+      low_res_masks = low_res_masks[:, :1, ...]
+      iou_predictions = iou_predictions[:, :1]
     # Upscale the masks to the original image resolution
     masks = self.model.postprocess_masks(low_res_masks, self.input_size, self.original_size)
 
@@ -350,12 +355,21 @@ def make_prompts(point:Union[str, ndarray], img_size:tuple) -> Prompts:
 def make_pred(ptor_pack:PtorPack, img:npimg_u8, multi_mask:bool=False, ret_logits:bool=False) -> Union[Tuple[npimg_b1, float], Tuple[List[npimg_b1], List[float]]]:
   ptor, prompts = ptor_pack
   ptor.set_image(img)
-  mask, piou, _ = ptor.predict(*prompts, multimask_output=multi_mask, return_logits=ret_logits)
+  predict_kwargs = {
+    'multimask_output': multi_mask,
+    'return_logits': ret_logits,
+  }
+  if IS_BACKEND_TINY_SAM:
+    del predict_kwargs['multimask_output']
+  mask, piou, _ = ptor.predict(*prompts, **predict_kwargs)
   ptor.reset_image()
-  if multi_mask:
-    return [mask[i] for i in range(len(mask))], piou.tolist()
+  if IS_BACKEND_TINY_SAM:
+    return mask[0], piou[0].item()
   else:
-    return mask[0], piou.item()    # [C=1, H, W] => [H, W]
+    if multi_mask:
+      return [mask[i] for i in range(len(mask))], piou.tolist()
+    else:
+      return mask[0], piou.item()    # [C=1, H, W] => [H, W]
 
 def make_tgt(ptor:SamPredictor, img:npimg_u8, point_tgt:Union[str, ndarray])-> npimg_b1:
   if point_tgt is None or point_tgt == '': return None

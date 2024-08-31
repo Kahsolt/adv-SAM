@@ -205,8 +205,8 @@ def get_parser() -> ArgumentParser:
 
   parser = get_base_parser()
   # limit run sample count
-  parser.add_argument('-L', '--limit_img', default=-1, type=int, help='limit run image count, set -1 for no limit')
-  parser.add_argument('-K', '--limit_ant', default=-1, type=int, help='limit run annot count, set -1 for no limit')
+  parser.add_argument('-L',  '--limit_img', default=-1, type=int, help='limit run image count, set -1 for no limit')
+  parser.add_argument('-LA', '--limit_ant', default=-1, type=int, help='limit run annot count, set -1 for no limit')
   parser.add_argument('--filter_area',  type=str, help='filter sample by area, e.g.: 3000,5000')
   parser.add_argument('--filter_ratio', type=str, help='filter sample by area ratio, e.g.: 0.03,0.05')
   # attack settings

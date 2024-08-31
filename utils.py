@@ -26,28 +26,78 @@ from numpy.typing import NDArray
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-if 'repo':
+# SAM distro versions
+parser = ArgumentParser()
+parser.add_argument('-K', '--backend', default='SAM', choices=['SAM', 'FastSAM', 'MobileSAM', 'TinySAM'], help='choose the backend')
+args, _ = parser.parse_known_args()
+BACKEND = args.backend
+print(f'>> NOTE: You are running backend: {BACKEND}')
+
+if 'repo & backend':
   BASE_PATH = Path(__file__).parent.absolute()
   REPO_PATH = BASE_PATH / 'repo'
-  SAM_PATH = REPO_PATH / 'segment-anything'
-  SAM_CKPT_PATH = SAM_PATH / 'ckpt'
-  SAM_DEMO_FILE = SAM_PATH / 'notebooks' / 'images' / 'dog.jpg'
-  SAM_CKPTS = {
-    'vit_b': 'sam_vit_b_01ec64.pth',
-    'vit_l': 'sam_vit_l_0b3195.pth',
-    'vit_h': 'sam_vit_h_4b8939.pth',
-  }
   GRAD_CAM_PATH = REPO_PATH / 'pytorch-grad-cam'
   SEG_PGD_PATH = REPO_PATH / 'SegPGD'
   ROBUST_SEG_PATH = REPO_PATH / 'robust-segmentation'
 
   import sys
-  sys.path.append(str(SAM_PATH))
   sys.path.append(str(GRAD_CAM_PATH))
   sys.path.append(str(SEG_PGD_PATH))
   sys.path.append(str(ROBUST_SEG_PATH))
-  from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
-  from segment_anything.modeling import Sam
+
+  IS_BACKEND_TINY_SAM = False
+  if BACKEND == 'SAM':
+    SAM_PATH = REPO_PATH / 'segment-anything'
+    SAM_CKPT_PATH = SAM_PATH / 'ckpt'
+    SAM_DEMO_FILE = SAM_PATH / 'notebooks' / 'images' / 'dog.jpg'
+    SAM_CKPTS = {
+      'vit_b': 'sam_vit_b_01ec64.pth',
+      'vit_l': 'sam_vit_l_0b3195.pth',
+      'vit_h': 'sam_vit_h_4b8939.pth',
+    }
+    sys.path.append(str(SAM_PATH))
+    from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+    from segment_anything.modeling import Sam
+    from segment_anything.utils.transforms import ResizeLongestSide
+  elif BACKEND == 'FastSAM':
+    SAM_PATH = REPO_PATH / 'FastSAM'
+    SAM_CKPT_PATH = SAM_PATH / 'weights'
+    SAM_DEMO_FILE = SAM_PATH / 'images' / 'dogs.jpg'
+    SAM_CKPTS = {
+      'fastsam_x': 'FastSAM-x.pt',
+      'fastsam_s': 'FastSAM-s.pt',
+    }
+    sys.path.append(str(SAM_PATH))
+    from fastsam import FastSAMPredictor as SamPredictor
+    from fastsam import FastSAM as Sam
+    sam_model_registry = {
+      'vit_t': Sam,
+    }
+  elif BACKEND == 'MobileSAM':
+    SAM_PATH = REPO_PATH / 'MobileSAM'
+    SAM_CKPT_PATH = SAM_PATH / 'weights'
+    SAM_DEMO_FILE = SAM_PATH / 'app' / 'assets' / 'picture4.jpg'
+    SAM_CKPTS = {
+      'vit_t': 'mobile_sam.pt',
+    }
+    sys.path.append(str(SAM_PATH))
+    from mobile_sam import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+    from mobile_sam.modeling import Sam
+    from mobile_sam.utils.transforms import ResizeLongestSide
+  elif BACKEND == 'TinySAM':
+    IS_BACKEND_TINY_SAM = True
+    SAM_PATH = REPO_PATH / 'TinySAM'
+    SAM_CKPT_PATH = SAM_PATH / 'weights'
+    SAM_DEMO_FILE = SAM_PATH / 'fig' / 'picture3.jpg'
+    SAM_CKPTS = {
+      'vit_t': 'tinysam.pth',
+    }
+    sys.path.append(str(SAM_PATH))
+    from tinysam import sam_model_registry, SamPredictor
+    from tinysam.modeling import Sam
+    from tinysam.utils.transforms import ResizeLongestSide
+  else: raise ValueError(f'unknown backend: {BACKEND}')
+
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -122,12 +172,6 @@ def info_mem_vram():
 
   tensors = get_all_tensors()
   print('n_tensor:', len(tensors))
-
-  if not 'pympler':
-    from pympler import muppy, summary
-    all_objects = muppy.get_objects()
-    sum1 = summary.summarize(all_objects)
-    summary.print_(sum1)
 
 
 def load_img(fp:Path, mode='RGB', dtype=np.uint8) -> Union[npimg_u8, npimg_f32]:
@@ -274,9 +318,18 @@ load_cfg = load_json
 
 
 def load_sam(model:str) -> Sam:
+  if model not in SAM_CKPTS and len(SAM_CKPTS) == 1:
+    model_default = list(SAM_CKPTS.keys())[0]
+    print(f'>> [WARN] model {model} not found in registry, force changed to {model_default!r}')
+    model = model_default
   fp = SAM_CKPT_PATH / SAM_CKPTS[model]
   print(f'>> load weights from {fp}')
-  return sam_model_registry[model](checkpoint=str(fp)).eval().to(device)
+  if BACKEND == 'FastSAM':
+    raise RuntimeError('FastSAM is not supported yet :(')
+  else:
+    model: nn.Module = sam_model_registry[model](checkpoint=str(fp)).eval().to(device)
+  print(f'>> [Model Params] param_cnt: {sum(p.numel() for p in model.parameters())}')
+  return model
 
 def get_param_cnt(model:nn.Module) -> int:
   return sum([p.numel() for p in model.parameters() if p.requires_grad])
@@ -291,8 +344,12 @@ def get_parser() -> ArgumentParser:
 
 def get_args(parser:ArgumentParser=None) -> Namespace:
   parser = parser or get_parser()
-  args = parser.parse_args()
+  args, _ = parser.parse_known_args()
 
   if not args.D: assert Path(args.f).is_file(), f'>> {args.f} is not a file'
+
+  if BACKEND == 'TinySAM':
+    print('>> [WARN] --multi_mask is forced to be True for TinySAM')
+    args.multi_mask = True
 
   return args

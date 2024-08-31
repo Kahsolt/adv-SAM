@@ -15,6 +15,7 @@
 ⚪ run
 
 - run `run_gui.py` for interactive SAM app
+  - use `-K <SAM|MobileSAM>` to change SAM backend :)
 - run `atk_sam.py` for attack
 - see cmdline exmpales in `run.cmd`
 

@@ -7,8 +7,14 @@ from utils import *
 
 # ↓↓↓ repo\pytorch-grad-cam\pytorch_grad_cam\base_cam.py ↓↓↓
 
-from pytorch_grad_cam.base_cam import BaseCAM
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+try:
+    from pytorch_grad_cam.base_cam import BaseCAM
+    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+except ImportError:
+    print('>> WARN: pip package "pytorch_grad_cam" not installed, GradCAM-related stuff will not work :(')
+    BaseCAM = Any
+    ClassifierOutputTarget = Any
+
 
 def BaseCAM_forward_hijack(self: BaseCAM, input_tensor: torch.Tensor, targets: List[torch.nn.Module], eigen_smooth: bool = False) -> np.ndarray:
   if self.cuda: input_tensor = input_tensor.cuda()

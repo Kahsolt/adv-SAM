@@ -8,6 +8,7 @@ import tkinter.messagebox as tkmsg
 import tkinter.filedialog as tkfdlg
 from PIL import Image
 from PIL.ImageTk import PhotoImage
+from inspect import signature
 from traceback import print_exc
 
 from run_cui import *
@@ -71,7 +72,8 @@ class App:
     frm1 = ttk.Frame(wnd)
     frm1.pack(side=tk.TOP, anchor=tk.N, expand=tk.YES, fill=tk.X)
     if True:
-      self.var_model = tk.StringVar(frm1, value=self.args.M)
+      model_default = self.args.M if self.args.M in SAM_CKPTS else list(SAM_CKPTS.keys())[0]
+      self.var_model = tk.StringVar(frm1, value=model_default)
       cb = ttk.Combobox(frm1, state='readonly', values=list(SAM_CKPTS.keys()), textvariable=self.var_model, width=12)
       cb.bind('<<ComboboxSelected>>', lambda evt: self.change_model())
       cb.pack(side=tk.LEFT)
@@ -154,12 +156,15 @@ class App:
     labels = np.asarray([1])
     print(f'<< cursor: ({sel_y}, {sel_x}), point: ({pt_y}, {pt_x})')
 
-    masks, iou_predictions, low_res_logits = self.predictor.predict(
-      point_coords=coords, 
-      point_labels=labels, 
-      multimask_output=args.multi_mask,
-      return_logits=True,
-    )
+    predict_kwargs = {
+      'point_coords': coords,
+      'point_labels': labels,
+      'multimask_output': args.multi_mask,
+      'return_logits': True,
+    }
+    if 'multimask_output' not in signature(self.predictor.predict).parameters:  # compact for TinySAM
+      del predict_kwargs['multimask_output']
+    masks, iou_predictions, low_res_logits = self.predictor.predict(**predict_kwargs)
 
     if args.multi_mask:   # select the largest piou
       idx = np.argmax(iou_predictions)

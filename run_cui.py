@@ -27,7 +27,7 @@ def run_ptor(args, sam, img):
   if 'point a coord':
     coords = np.asarray([[200, 400]])
     labels = np.asarray([1])
-  masks, iou_predictions, low_res_masks = predictor.predict(point_coords=coords, point_labels=labels, multimask_output=False)
+  masks, iou_predictions, low_res_masks = predictor.predict(point_coords=coords, point_labels=labels)
 
   for mask, piou, lmask in zip(masks, iou_predictions, low_res_masks):
     print('piou:', piou.item())

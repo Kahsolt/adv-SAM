@@ -19,6 +19,16 @@ IF NOT EXIST sam_vit_h_4b8939.pth (wget https://dl.fbaipublicfiles.com/segment_a
 POPD
 POPD
 
+REM FastSAM (Jun 21, 2023)
+git clone https://github.com/CASIA-IVA-Lab/FastSAM
+
+REM MobileSAM (Jun 26, 2023)
+git clone https://github.com/ChaoningZhang/MobileSAM
+
+REM TinySAM (Dec 19, 2023)
+git clone https://github.com/xinghaochen/TinySAM
+
+
 REM Grad-CAM
 git clone https://github.com/jacobgil/pytorch-grad-cam
 
