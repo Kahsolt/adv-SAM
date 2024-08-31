@@ -1,13 +1,8 @@
-# Call White Black: Adversarial Attack over SAM
+# Adversarial Attack over SAM with Various Loss Functions
 
-    Explore targeted PGD adversarial attack over the Segment-Anything Model
+    Explore PGD attack with various loss function over the Segment-Anything Model
 
 ----
-
-### **The official implementation of Call White Black: Mislead the Segment-Anything Model with Targeted Attack**  
-
-Do not worry, our paper is on the way :) 🎉🎉🎉  
-
 
 ### Quickstart
 
@@ -19,34 +14,9 @@ Do not worry, our paper is on the way :) 🎉🎉🎉
 
 ⚪ run
 
-- run `run_ptor_gui.py` for interactive SAM app
+- run `run_gui.py` for interactive SAM app
 - run `atk_sam.py` for attack
 - see cmdline exmpales in `run.cmd`
-
-
-### Experiments
-
-⚪ non-targeted
-
-ℹ It is technically a simple flat-color target valued `loss_w`
-
-| loss\meth | FGSM | PGD | SegPGD |
-| :-: | :-: | :-: | :-: |
-| MAE     |     |     |     |
-| MSE     |     |     |     |
-| ClipMAE |     |     |     |
-| ClipMSE |     |     |     |
-| BCE     |     |     |     |
-
-⚪ targetd
-
-| loss\meth | FGSM | PGD | SegPGD |
-| :-: | :-: | :-: | :-: |
-| MAE     |     |     |     |
-| MSE     |     |     |     |
-| ClipMAE |     |     |     |
-| ClipMSE |     |     |     |
-| BCE     |     |     |     |
 
 
 ### Dataset
@@ -67,15 +37,12 @@ data/
 - Attack-SAM: [https://arxiv.org/abs/2305.00866](https://arxiv.org/abs/2305.00866)
 - SegPGD: [https://arxiv.org/abs/2207.12391](https://arxiv.org/abs/2207.12391)
 
-
-#### credit
-
-If you find this useful, please cite us:
+If you find this repo useful, please star and cite us:
 
 ```
 @misc{kahsolt2023,
   author = {Kahsolt},
-  title  = {Call White Black: Mislead the Segment-Anything Model with Targeted Attack},
+  title  = {Adversarial Attack over SAM with Various Loss Functions},
   howpublished = {\url{https://github.com/Kahsolt/adv-SAM}}
   month  = {June},
   year   = {2023}
