@@ -25,6 +25,9 @@ git clone https://github.com/CASIA-IVA-Lab/FastSAM
 REM MobileSAM (Jun 26, 2023)
 git clone https://github.com/ChaoningZhang/MobileSAM
 
+REM EfficientSAM (Nov 28, 2023)
+git clone https://github.com/yformer/EfficientSAM
+
 REM TinySAM (Dec 19, 2023)
 git clone https://github.com/xinghaochen/TinySAM
 

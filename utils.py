@@ -28,10 +28,12 @@ import matplotlib.pyplot as plt
 
 # SAM distro versions
 parser = ArgumentParser()
-parser.add_argument('-K', '--backend', default='SAM', choices=['SAM', 'FastSAM', 'MobileSAM', 'TinySAM'], help='choose the backend')
+parser.add_argument('-K', '--backend', default='SAM', choices=['SAM', 'FastSAM', 'MobileSAM', 'EfficientSAM', 'TinySAM'], help='choose the backend')
 args, _ = parser.parse_known_args()
 BACKEND = args.backend
 print(f'>> NOTE: You are running backend: {BACKEND}')
+if BACKEND in ['FastSAM', 'EfficientSAM']:
+  raise RuntimeError('FastSAM is not supported yet :(')
 
 if 'repo & backend':
   BASE_PATH = Path(__file__).parent.absolute()
@@ -84,6 +86,18 @@ if 'repo & backend':
     from mobile_sam import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
     from mobile_sam.modeling import Sam
     from mobile_sam.utils.transforms import ResizeLongestSide
+  elif BACKEND == 'EfficientSAM':
+    SAM_PATH = REPO_PATH / 'EfficientSAM'
+    SAM_CKPT_PATH = SAM_PATH / 'weights'
+    SAM_DEMO_FILE = SAM_PATH / 'figs' / 'examples' / 'dogs.jpg'
+    sys.path.append(str(SAM_PATH))
+    from efficient_sam import build_efficient_sam_vitt, build_efficient_sam_vits
+    from efficient_sam.efficient_sam import EfficientSam as Sam
+    SamPredictor = Any
+    SAM_CKPTS = {
+      'vitt': build_efficient_sam_vitt,
+      'vits': build_efficient_sam_vits,
+    }
   elif BACKEND == 'TinySAM':
     IS_BACKEND_TINY_SAM = True
     SAM_PATH = REPO_PATH / 'TinySAM'
@@ -322,11 +336,14 @@ def load_sam(model:str) -> Sam:
     model_default = list(SAM_CKPTS.keys())[0]
     print(f'>> [WARN] model {model} not found in registry, force changed to {model_default!r}')
     model = model_default
-  fp = SAM_CKPT_PATH / SAM_CKPTS[model]
-  print(f'>> load weights from {fp}')
-  if BACKEND == 'FastSAM':
-    raise RuntimeError('FastSAM is not supported yet :(')
+  if BACKEND == 'EfficientSAM':
+    cwd = os.getcwd()
+    os.chdir(SAM_PATH)
+    model: nn.Module = SAM_CKPTS[model]().eval().to(device)
+    os.chdir(cwd)
   else:
+    fp = SAM_CKPT_PATH / SAM_CKPTS[model]
+    print(f'>> load weights from {fp}')
     model: nn.Module = sam_model_registry[model](checkpoint=str(fp)).eval().to(device)
   print(f'>> [Model Params] param_cnt: {sum(p.numel() for p in model.parameters())}')
   return model
