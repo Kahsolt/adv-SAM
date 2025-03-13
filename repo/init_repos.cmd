@@ -19,6 +19,9 @@ IF NOT EXIST sam_vit_h_4b8939.pth (wget https://dl.fbaipublicfiles.com/segment_a
 POPD
 POPD
 
+REM HQ-SAM (Jun 1, 2023)
+git clone https://github.com/SysCV/sam-hq
+
 REM FastSAM (Jun 21, 2023)
 git clone https://github.com/CASIA-IVA-Lab/FastSAM
 

@@ -126,7 +126,10 @@ class SamForwarder(nn.Module):
 
   def forward(self, image:Tensor, point_coords:Tensor=None, point_labels:Tensor=None, boxes:Tensor=None, mask_input:Tensor=None, multi_mask:bool=False) -> Tuple[Tensor, Tensor]:
     # Embed image
-    self.features = self.model.image_encoder(image)
+    if IS_BACKEND_HQ_SAM:
+      self.features, interm_features = self.model.image_encoder(image)
+    else:
+      self.features = self.model.image_encoder(image)
     # Embed prompts
     points = (point_coords, point_labels) if point_coords is not None else None
     sparse_embeddings, dense_embeddings = self.model.prompt_encoder(points, boxes, mask_input)
@@ -140,6 +143,9 @@ class SamForwarder(nn.Module):
     }
     if IS_BACKEND_TINY_SAM:
       del mask_decoder_kwargs['multimask_output']
+    if IS_BACKEND_HQ_SAM:
+      mask_decoder_kwargs['hq_token_only'] = False
+      mask_decoder_kwargs['interm_embeddings'] = interm_features
     low_res_masks, iou_predictions = self.model.mask_decoder(**mask_decoder_kwargs)
     if IS_BACKEND_TINY_SAM:
       low_res_masks = low_res_masks[:, :1, ...]

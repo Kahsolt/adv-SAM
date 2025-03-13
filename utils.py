@@ -28,12 +28,12 @@ import matplotlib.pyplot as plt
 
 # SAM distro versions
 parser = ArgumentParser()
-parser.add_argument('-K', '--backend', default='SAM', choices=['SAM', 'FastSAM', 'MobileSAM', 'EfficientSAM', 'TinySAM'], help='choose the backend')
+parser.add_argument('-K', '--backend', default='SAM', choices=['SAM', 'MobileSAM', 'TinySAM', 'HQSAM'], help='choose the backend')
 args, _ = parser.parse_known_args()
 BACKEND = args.backend
 print(f'>> NOTE: You are running backend: {BACKEND}')
 if BACKEND in ['FastSAM', 'EfficientSAM']:
-  raise RuntimeError('FastSAM is not supported yet :(')
+  raise RuntimeError('FastSAM & EfficientSAM is not compatible yet :(')
 
 if 'repo & backend':
   BASE_PATH = Path(__file__).parent.absolute()
@@ -48,6 +48,7 @@ if 'repo & backend':
   sys.path.append(str(ROBUST_SEG_PATH))
 
   IS_BACKEND_TINY_SAM = False
+  IS_BACKEND_HQ_SAM = False
   if BACKEND == 'SAM':
     SAM_PATH = REPO_PATH / 'segment-anything'
     SAM_CKPT_PATH = SAM_PATH / 'ckpt'
@@ -110,6 +111,21 @@ if 'repo & backend':
     from tinysam import sam_model_registry, SamPredictor
     from tinysam.modeling import Sam
     from tinysam.utils.transforms import ResizeLongestSide
+  elif BACKEND == 'HQSAM':
+    IS_BACKEND_HQ_SAM = True
+    SAM_PATH = REPO_PATH / 'sam-hq'
+    SAM_CKPT_PATH = SAM_PATH / 'weights'
+    SAM_DEMO_FILE = SAM_PATH / 'demo' / 'input_imgs' / 'dog.jpg'
+    SAM_CKPTS = {
+      'vit_b': 'sam_hq_vit_b.pth',
+      'vit_l': 'sam_hq_vit_l.pth',
+      'vit_h': 'sam_hq_vit_h.pth',
+      'vit_tiny': 'sam_hq_vit_tiny.pth',
+    }
+    sys.path.append(str(SAM_PATH))
+    from segment_anything import sam_model_registry, SamAutomaticMaskGenerator, SamPredictor
+    from segment_anything.modeling import Sam
+    from segment_anything.utils.transforms import ResizeLongestSide
   else: raise ValueError(f'unknown backend: {BACKEND}')
 
 
@@ -118,7 +134,8 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 BASE_PATH = Path(__file__).parent.absolute()
 DATA_PATH = BASE_PATH / 'data'
 DATASET_PATH = {
-  'sam':   DATA_PATH / 'SAM_data',
+  'sam':       DATA_PATH / 'SAM_data',
+  'cityspace': DATA_PATH / 'cityspace',
 }
 OUT_PATH = BASE_PATH / 'out' ; OUT_PATH.mkdir(exist_ok=True)
 
