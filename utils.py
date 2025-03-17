@@ -23,7 +23,6 @@ from torchvision.utils import make_grid
 import numpy as np
 from numpy import ndarray
 from numpy.typing import NDArray
-import seaborn as sns
 import matplotlib.pyplot as plt
 
 # SAM distro versions
@@ -134,8 +133,8 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 BASE_PATH = Path(__file__).parent.absolute()
 DATA_PATH = BASE_PATH / 'data'
 DATASET_PATH = {
-  'sam':       DATA_PATH / 'SAM_data',
-  'cityspace': DATA_PATH / 'cityspace',
+  'sam':        DATA_PATH / 'SAM_data',
+  'cityscapes': DATA_PATH / 'cityscapes',
 }
 OUT_PATH = BASE_PATH / 'out' ; OUT_PATH.mkdir(exist_ok=True)
 
@@ -203,6 +202,43 @@ def info_mem_vram():
 
   tensors = get_all_tensors()
   print('n_tensor:', len(tensors))
+
+
+# Shoelace公式: https://blog.csdn.net/diana_jiuri1314/article/details/116111038
+def polygon_area(pts):
+  area = 0
+  q = pts[-1]
+  for p in pts:
+    area += p[0] * q[1] - p[1] * q[0]
+    q = p
+  return abs(area) / 2
+
+# https://blog.51cto.com/u_16213439/12430300
+def polygon_center(pts):
+  n = len(pts)
+  A = 0
+  C_x, C_y = 0, 0
+  for i in range(n):
+    x0, y0 = pts[i]
+    x1, y1 = pts[(i + 1 ) % n]
+    it = x0 * y1 - x1 * y0
+    A += it
+    C_x += (x0 + x1) * it
+    C_y += (y0 + y1) * it
+  f = 3 * A
+  C_y /= f
+  C_x /= f
+  return C_x, C_y
+
+CITYSCAPES_LABEL_IGBORE = [
+  'unlabeled',
+  'ego vehicle',
+  'rectification border',
+  'out of roi',
+  'static',
+  'dynamic',
+  'ground',
+]
 
 
 def load_img(fp:Path, mode='RGB', dtype=np.uint8) -> Union[npimg_u8, npimg_f32]:

@@ -2,6 +2,8 @@
 # Author: Armit
 # Create Time: 2023/10/23
 
+# 测定数据集的统计量
+
 from utils import *
 from traceback import print_exc
 
@@ -24,11 +26,37 @@ def make_sam(args):
     img_id = cfg_img['image_id']
 
     total_area_dict[img_id] = H * W
-    area_dict[img_id]: List[int] = []
+    area_dict[img_id] = []
     for annot in cfg['annotations']:
       area_dict[img_id].append(annot['area'])
 
   save_stats(args, area_dict, total_area_dict)
+
+
+# see also: https://github.com/mcordts/cityscapesScripts
+def make_cityscapes(args):
+  from atk_cityscapes import DATA_ROOT as CITYSCAPES_DATA_ROOT
+
+  annots_root = CITYSCAPES_DATA_ROOT / 'gtFine_trainvaltest' / 'gtFine' / 'val'
+
+  area_dict: Dict[int, List[int]] = {}
+  total_area_dict: Dict[int, int] = {}
+  for scene_dp in sorted(annots_root.iterdir()):
+    for annot_fp in sorted(scene_dp.iterdir()):
+      if annot_fp.suffix != '.json': continue
+      annots = load_json(annot_fp)
+      img_id = annot_fp.stem.replace('_gtFine_polygons', '')
+      H, W = annots['imgHeight'], annots['imgWidth']
+
+      total_area_dict[img_id] = H * W
+      area_dict[img_id] = []
+      for obj in annots['objects']:
+        if obj['label'] in CITYSCAPES_LABEL_IGBORE: continue
+        area = polygon_area(obj['polygon'])
+        area_dict[img_id].append(area)
+
+  save_stats(args, area_dict, total_area_dict)
+
 
 def save_stats(args, area_dict:Dict[int, List[int]], total_area_dict:Dict[int, int]):
   area_list = []
@@ -71,7 +99,8 @@ def save_stats(args, area_dict:Dict[int, List[int]], total_area_dict:Dict[int, i
   plt.subplot(122) ; plt.hist(ratio_log, bins=50) ; plt.title('log(area_ratio)')
   plt.savefig(OUT_PATH / f'stat_{args.D}.png', dpi=600)
 
-def make_sam_hist(args):
+
+def make_hist(args):
   data = load_json(OUT_PATH / f'stat_{args.D}.json')
   n_masks = data['n_masks']
   area_dict = data['area']
@@ -104,7 +133,7 @@ def query(args):
   fp = OUT_PATH / f'stat_{args.D}.json'
   if not fp.exists(): globals()[f'make_{args.D}'](args)
   fp_hist = OUT_PATH / f'stat_{args.D}_hist_bin=100.txt'
-  if not fp_hist.exists(): globals()[f'make_{args.D}_hist'](args)
+  if not fp_hist.exists(): make_hist(args)
 
   data = load_json(fp)
   area_dict: Dict[int, List[int]] = data['area']
@@ -145,9 +174,12 @@ def query(args):
     return kind, vals
 
   while True:
-    s: str = input('>> input area(int) or ratio(float): ')
+    s: str = input('>> input area(int) or ratio(float): ').strip()
+    if s in ['q', 'x']: break
     try:
       kind, (vmin, vmax) = parse_input(s)
+    except KeyboardInterrupt:
+      break
     except:
       print_exc()
       continue
@@ -158,7 +190,7 @@ def query(args):
 
 if __name__ == '__main__':
   parser = ArgumentParser()
-  parser.add_argument('-D', default='sam', choices=['sam'], help='dataset')
+  parser.add_argument('-D', default='sam', choices=['sam', 'cityscapes'], help='dataset')
   args = parser.parse_args()
 
   try:
