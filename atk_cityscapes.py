@@ -168,9 +168,9 @@ def run_sam_samples(args, sample_ids, ptor:SamPredictor, fwder:SamForwarder, los
         point = np.asarray([xy])
         prompts = make_prompts(point, img_size)
       if 'ground truth':
-        im = Image.new('L', img_size[::-1], color=0)
+        im = Image.new('L', img_size, color=0)
         cvs = ImageDraw.Draw(im)
-        pts = [tuple(e) for e in obj['polygon']]
+        pts = [tuple(e[::-1]) for e in obj['polygon']]
         cvs.polygon(pts, fill=1, outline=1)
         mask_gt: npimg_b1 = np.ascontiguousarray(im, dtype=bool).transpose(1, 0)
 
