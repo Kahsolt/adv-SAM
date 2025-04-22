@@ -4,6 +4,9 @@
 
 ----
 
+ℹ This is the official implementation of "Adversarial Benchmarking of Segment Anything Model on Loss Functions and Multi-Scale Objects" (Submitted)  
+ℹ The [DarkSAM](https://github.com/CGCL-codes/DarkSAM) repo borrows early code from this repo, linking paper ["DarkSAM: Fooling Segment Anything Model to Segment Nothing" (arXiv:2409.17874)](https://arxiv.org/abs/2409.17874) also for your reference :)  
+
 ### Quickstart
 
 ⚪ install
@@ -15,7 +18,7 @@
 ⚪ run
 
 - run `run_gui.py` for interactive SAM app
-  - use `-K <SAM|MobileSAM>` to change SAM backend :)
+  - use `-K <SAM|MobileSAM|TinySAM|HQSAM>` to change SAM backend :)
 - run `atk_sam.py` for attack
 - see cmdline exmpales in `run.cmd`
 
